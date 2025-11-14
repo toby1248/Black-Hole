@@ -1,2 +1,2 @@
 # Black-Hole
-Simulation of a galaxy
+Black hole sim v1
