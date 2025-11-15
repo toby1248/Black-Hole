@@ -1,0 +1,102 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tde-sph"
+version = "1.0.0"
+description = "Relativistic SPH framework for stellar tidal disruption events around SMBHs"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "TDE-SPH Dev Team"},
+]
+keywords = ["astrophysics", "SPH", "general-relativity", "tidal-disruption", "black-holes", "CUDA"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "numba>=0.58.0",
+    "cupy-cuda12x>=12.0.0; platform_machine=='x86_64'",  # CUDA 12.x for RTX 4090
+    "h5py>=3.8.0",
+    "plotly>=5.14.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "kaleido>=0.2.1",  # For static image export from Plotly
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.3.0",
+    "pytest-cov>=4.1.0",
+    "pytest-benchmark>=4.0.0",
+    "black>=23.3.0",
+    "ruff>=0.0.270",
+    "mypy>=1.3.0",
+    "ipython>=8.12.0",
+    "jupyter>=1.0.0",
+]
+viz = [
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
+extras = [
+    "pyarrow>=12.0.0",  # For Parquet export
+    "pandas>=2.0.0",
+]
+
+[project.scripts]
+tde-sph = "tde_sph.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --cov=tde_sph --cov-report=term-missing"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PT"]
+ignore = ["E501"]  # Line too long (handled by black)
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Relaxed for initial development
+ignore_missing_imports = true  # CuPy and other packages may not have stubs
