@@ -1,6 +1,6 @@
 ## Plan: Phase 2 GR upgrade & agent instructions
 
-Phase 1 implements a clean, modular Newtonian SPH TDE framework. Phase 2 should introduce GR-capable components (metrics, GR gravity/orbits, Hamiltonian/GR-aware integration, GR–Newtonian toggle) without breaking the existing Newtonian path. The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
+Phase 1 implements a clean, modular Newtonian SPH TDE framework. Phase 2 should introduce GR-capable components (metrics, GR gravity/orbits, Hamiltonian/GR-aware integration, GR–Newtonian toggle) without breaking the existing Newtonian path. The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. Agents should edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots. Contextless reviewer agents will double-check the logic of each self contained section without bias and distraction 
 
 ### Steps
 1. Review `CLAUDE.md` and code in each subpackage (`core`, `sph`, `gravity`, `metric`, `integration`, `ICs`, `eos`, `radiation`, `io`, `visualization`, `config`) to align docs with actual Phase 1 state and Phase 2 goals.
@@ -31,5 +31,6 @@ TASKS:
 2. Flag missing context or hidden assumptions.
 3. Suggest minimal, concrete improvements.
 4. Add to or create the local NOTES.md
+
 
 
