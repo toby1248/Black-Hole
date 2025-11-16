@@ -231,13 +231,14 @@ Below: physics requested + additional effects from literature, with complexity v
 - **CON-002**: Target hardware:
   - Single RTX 4090 with 24 GB VRAM (typical), 64 GB system RAM, Ryzen 7800X3D.  
   - Design to exploit large particle counts (≥10⁶) but remain usable at ~10⁵ for fast iteration.
-  - FP32 executes 64x faster than any other useful data type. Do not use anything else unless strictly necessary
 
 - **CON-003**: Avoid dependence on heavy, non-Python ecosystems (e.g. no mandatory FORTRAN/C++ build system in v1). C/C++ extensions allowed for performance-critical hot spots later.
 
 - **CON-004**: Plotting via Plotly 3D volume/point cloud; data export to HDF5/Parquet for external rendering (e.g. Blender, ParaView).
 
 - **CON-005**: Code must be unit-testable (pytest) and support automated regression tests with fixed random seeds.
+  
+- **CON-005**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
 
 ### 1.4 Guidelines and patterns
 
