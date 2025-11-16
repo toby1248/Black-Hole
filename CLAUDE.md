@@ -78,7 +78,9 @@ The minimum deliverable is a physically robust, architecturally clean prototype 
 
 The architecture prioritises **replaceable modules** over peak performance: each major physical ingredient (metric, EOS, radiation, viscosity, transport, etc.) must be encapsulated behind well-defined interfaces so that more sophisticated implementations can be swapped in later.
 
----
+### Plan: Phase 2 GR upgrade & agent instructions
+
+Phase 1 implements a clean, modular Newtonian SPH TDE framework. Phase 2 should introduce GR-capable components (metrics, GR gravity/orbits, Hamiltonian/GR-aware integration, GR–Newtonian toggle) without breaking the existing Newtonian path. The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
 
 ## 1. Requirements & Constraints
 
@@ -254,7 +256,7 @@ Below: physics requested + additional effects from literature, with complexity v
 
 ## 2. Implementation Steps
 
-### Implementation Phase 1 — Core architecture, Newtonian SPH baseline
+### Implementation Phase 1 — Core architecture, Newtonian SPH baseline (complete)
 
 - **GOAL-001**: Establish a clean Python package structure with an SPH engine, Newtonian gravity, and basic TDE initial conditions, plus Plotly visualisation and data export. No GR yet.
 
