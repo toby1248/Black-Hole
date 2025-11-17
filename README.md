@@ -309,7 +309,7 @@ If you use this code, please cite:
 ```bibtex
 @software{tde_sph_2025,
   title = {TDE-SPH: Relativistic SPH Framework for Tidal Disruption Events},
-  author = {TDE-SPH Dev Team},
+  author = {TDE-SPH AI Dev Team},
   year = {2025},
   url = {https://github.com/yourusername/Black-Hole}
 }
