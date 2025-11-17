@@ -2,7 +2,7 @@
 goal: Relativistic SPH framework for stellar tidal disruption events around SMBHs (Python/NumPy/CUDA)
 version: 1.0
 date_created: 2025-11-15
-last_updated: 2025-11-15
+last_updated: 2025-11-17
 owner: TDE-SPH Dev Team
 status: Planned
 tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
@@ -25,12 +25,9 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 - Adhere to the established architecture: `Simulation` orchestrates pluggable components.
 - Prefer reusing existing utilities over duplicating functionality; if a new utility is required, place it in a shared, well-named location.
 
-### Special Folder Rules
+# Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
 
-- The `prompts/` directory is **off-limits** to all CLAUDE agents at runtime:
-  - Do NOT open, read, or modify files under `prompts/`.
-  - Treat your operating instructions as already loaded; configuration comes from code/config, not from `prompts/`.
-- Subfolder `CLAUDE.md` files provide **local module instructions** and must be followed when working in that module.
+![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
 
 ## Software and computational constraints
 
@@ -47,8 +44,6 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 - **CON-005**: Code must be unit-testable (pytest) and support automated regression tests with fixed random seeds.
   
 - **CON-005**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
-
-- **CON-006**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
 
 
 ## Guidelines and patterns
