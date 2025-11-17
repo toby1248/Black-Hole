@@ -400,7 +400,7 @@ class Simulation:
         # Log initialization
         if self.config.verbose:
             self._log(f"Initialized {self.config.mode} TDE-SPH simulation")
-            self._log(f"  Particles: {len(self.particles)}")
+            self._log(f"  Particles: {self.particles.n_particles}")
             self._log(f"  Output: {self.output_dir}")
             if self.config.mode == "GR":
                 self._log(f"  Metric: {self.metric.name if self.metric else 'None'}")
@@ -508,10 +508,9 @@ class Simulation:
             Dictionary with 'gravity', 'hydro', 'total' accelerations (N, 3).
         """
         # 1. Find neighbours and compute densities
-        neighbour_data = find_neighbours_bruteforce(
+        neighbour_lists, _ = find_neighbours_bruteforce(
             self.particles.positions,
-            self.particles.smoothing_lengths,
-            kernel=self.kernel
+            self.particles.smoothing_lengths
         )
 
         # Update densities
@@ -519,15 +518,15 @@ class Simulation:
             self.particles.positions,
             self.particles.masses,
             self.particles.smoothing_lengths,
-            neighbour_data,
-            kernel=self.kernel
+            neighbour_lists,
+            kernel_func=self.kernel.kernel
         )
 
         # Update smoothing lengths (adaptive h)
         self.particles.smoothing_lengths = update_smoothing_lengths(
+            self.particles.positions,
             self.particles.masses,
-            self.particles.density,
-            eta=self.config.smoothing_length_eta
+            self.particles.smoothing_lengths
         )
 
         # 2. Update thermodynamics (P, c_s from EOS)
@@ -548,11 +547,10 @@ class Simulation:
             self.particles.masses,
             self.particles.density,
             self.particles.pressure,
-            self.particles.internal_energy,
             self.particles.sound_speed,
             self.particles.smoothing_lengths,
-            neighbour_data,
-            kernel=self.kernel,
+            neighbour_lists,
+            kernel_gradient_func=self.kernel.kernel_gradient,
             alpha=self.config.artificial_viscosity_alpha,
             beta=self.config.artificial_viscosity_beta,
         )
@@ -627,7 +625,19 @@ class Simulation:
             'total_energy': self.state.total_energy,
         }
 
-        write_snapshot(str(filename), self.particles, self.state.time, metadata)
+        # Convert ParticleSystem to dict of arrays
+        particle_data = {
+            'positions': self.particles.positions,
+            'velocities': self.particles.velocities,
+            'masses': self.particles.masses,
+            'density': self.particles.density,
+            'internal_energy': self.particles.internal_energy,
+            'smoothing_length': self.particles.smoothing_length,
+            'pressure': self.particles.pressure,
+            'sound_speed': self.particles.sound_speed,
+        }
+
+        write_snapshot(str(filename), particle_data, self.state.time, metadata)
 
         self.state.last_snapshot_time = self.state.time
         self.state.snapshot_count += 1
