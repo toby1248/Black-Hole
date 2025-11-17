@@ -193,8 +193,8 @@ class LeapfrogIntegrator(TimeIntegrator):
             cfl_factor = self.cfl_factor
 
         # Extract or compute sound speeds
-        if hasattr(particles, 'sound_speeds'):
-            c_s = particles.sound_speeds.astype(np.float32)
+        if hasattr(particles, 'sound_speed'):
+            c_s = particles.sound_speed.astype(np.float32)
         elif 'sound_speeds' in kwargs:
             c_s = kwargs['sound_speeds'].astype(np.float32)
         else:
