@@ -1,0 +1,44 @@
+# Newtonian TDE Configuration
+#
+# Classic Newtonian tidal disruption simulation with solar-type star
+# and Newtonian black hole gravity (no GR effects).
+#
+# This configuration demonstrates Phase 1 functionality and serves as
+# a baseline for comparison with GR simulations.
+
+simulation:
+  mode: "Newtonian"
+  t_start: 0.0
+  t_end: 10.0
+  dt_initial: 0.001
+  snapshot_interval: 0.1
+  log_interval: 0.01
+  output_dir: "output/newtonian_tde"
+
+black_hole:
+  mass: 1.0e6  # 10^6 solar masses (converted to code units internally)
+  spin: 0.0    # Ignored in Newtonian mode
+
+metric:
+  type: "schwarzschild"  # Ignored in Newtonian mode
+  coordinate_system: "cartesian"
+
+integration:
+  use_hamiltonian_integrator: false
+  cfl_factor: 0.3
+  cfl_factor_gr: 0.1  # Not used in Newtonian mode
+  orbital_timestep_factor: 0.05
+
+sph:
+  neighbour_search_method: "bruteforce"
+  smoothing_length_eta: 1.2
+  artificial_viscosity_alpha: 1.0
+  artificial_viscosity_beta: 2.0
+
+precision:
+  use_fp64_for_metric: false  # Not needed in Newtonian mode
+
+misc:
+  energy_tolerance: 0.01
+  random_seed: 42
+  verbose: true

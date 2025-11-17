@@ -1,0 +1,46 @@
+# Schwarzschild (Non-Spinning) Black Hole TDE Configuration
+#
+# General relativistic tidal disruption simulation in Schwarzschild spacetime.
+# Demonstrates GR orbital dynamics with periapsis precession and relativistic
+# tidal forces, but no frame-dragging effects (spin = 0).
+#
+# Comparison with newtonian_tde.yaml quantifies GR corrections to debris
+# dynamics, fallback rates, and energy distributions.
+
+simulation:
+  mode: "GR"
+  t_start: 0.0
+  t_end: 100.0
+  dt_initial: 0.0005  # Smaller initial timestep for GR
+  snapshot_interval: 1.0
+  log_interval: 0.1
+  output_dir: "output/schwarzschild_tde"
+
+black_hole:
+  mass: 1.0  # In code units (G=c=M_BH=1)
+  spin: 0.0  # Schwarzschild: no spin
+
+metric:
+  type: "schwarzschild"
+  coordinate_system: "cartesian"
+
+integration:
+  use_hamiltonian_integrator: false  # Set true for high-accuracy near ISCO
+  isco_radius_threshold: 10.0  # Switch to Hamiltonian inside r < 10M
+  cfl_factor: 0.3  # Newtonian CFL (not used in GR)
+  cfl_factor_gr: 0.1  # Stricter CFL for GR timesteps
+  orbital_timestep_factor: 0.05  # dt = min(CFL, 0.05 * T_orbital)
+
+sph:
+  neighbour_search_method: "bruteforce"
+  smoothing_length_eta: 1.2
+  artificial_viscosity_alpha: 1.0
+  artificial_viscosity_beta: 2.0
+
+precision:
+  use_fp64_for_metric: true  # High precision for metric near horizon
+
+misc:
+  energy_tolerance: 0.02  # Slightly relaxed for hybrid GR+Newtonian
+  random_seed: 42
+  verbose: true
