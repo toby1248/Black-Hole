@@ -1,0 +1,57 @@
+# Kerr (Spinning) Black Hole TDE Configuration - Retrograde Orbit
+#
+# General relativistic tidal disruption in Kerr spacetime with retrograde orbit.
+# Demonstrates maximal GR effects: spin-orbit coupling, Lense-Thirring precession,
+# nodal precession, and frame dragging.
+#
+# Retrograde orbits (inclination > 90°) experience different ISCO radii and
+# tidal forces compared to prograde orbits, leading to distinct debris morphologies.
+#
+# References:
+#   - Kesden (2012): Analytic Kerr TDE parameter study
+#   - Liptai et al. (2019): GRSPH disc formation from eccentric TDEs
+#   - Tejeda et al. (2017): Hybrid relativistic hydrodynamics
+
+simulation:
+  mode: "GR"
+  t_start: 0.0
+  t_end: 100.0
+  dt_initial: 0.0002  # Very small timestep for high spin + retrograde
+  snapshot_interval: 1.0
+  log_interval: 0.1
+  output_dir: "output/kerr_retrograde_tde"
+
+black_hole:
+  mass: 1.0  # In code units (G=c=M_BH=1)
+  spin: 0.9  # High spin: a/M = 0.9 (near maximal)
+
+metric:
+  type: "kerr"
+  coordinate_system: "cartesian"  # Internal coordinates; Kerr in Boyer-Lindquist
+
+integration:
+  use_hamiltonian_integrator: true  # Critical for accurate Kerr geodesics
+  isco_radius_threshold: 8.0  # Kerr retrograde ISCO ~ 9M for a=0.9
+  cfl_factor: 0.3
+  cfl_factor_gr: 0.08  # Extra strict for high spin
+  orbital_timestep_factor: 0.03  # Finer sampling of orbital phase
+
+sph:
+  neighbour_search_method: "bruteforce"
+  smoothing_length_eta: 1.2
+  artificial_viscosity_alpha: 1.0
+  artificial_viscosity_beta: 2.0
+
+precision:
+  use_fp64_for_metric: true  # Essential near ergosphere
+
+misc:
+  energy_tolerance: 0.03  # Hybrid approximation + high spin
+  random_seed: 42
+  verbose: true
+
+# Notes:
+# - Kerr retrograde ISCO (a=0.9): r_ISCO ≈ 9M (vs ~2.3M for prograde)
+# - Frame dragging opposes orbital motion → stronger tidal shear
+# - Expect enhanced nozzle shock formation and stream self-crossing
+# - Compare with schwarzschild_tde.yaml to isolate spin effects
