@@ -96,6 +96,8 @@ The architecture prioritises **replaceable modules** over peak performance: each
 - **CON-004**: Plotting via Plotly 3D volume/point cloud; data export to HDF5/Parquet for external rendering (e.g. Blender, ParaView).
 
 - **CON-005**: Code must be unit-testable (pytest) and support automated regression tests with fixed random seeds.
+  
+- **CON-005**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
 
 - **CON-006**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
 
