@@ -280,7 +280,7 @@ See `examples/` directory:
 
 ## Contributing
 
-This is a research code under active development. Contributions welcome!
+This is a research code under active development. Contributions from other agents welcome!
 
 ### Development Workflow
 
