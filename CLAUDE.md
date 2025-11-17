@@ -10,39 +10,7 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 
 ## Feature Implementation System Guidelines
 
-### Parallel Feature Implementation Priorities
-
-- Prefer **small, well-scoped tasks** over monolithic changes.
-- Use **parallel agents** when different modules can be changed independently (e.g. `sph/`, `gravity/`, `metric/`, `eos/`, `io/`).
-- Avoid parallel edits to the **same file or tightly coupled module** to minimise merge conflicts and integration bugs.
-
-### Parallel Feature Implementation Workflow
-
-1. **Design & Ownership**
-
-- Identify affected modules (core, sph, gravity, metric, eos, radiation, integration, ICs, io, visualization, config).
-- Assign at most one agent per module for the duration of the feature.
-
-2. **Module-local Implementation**
-
-- Each agent implements changes **only inside its module**, respecting interfaces from `tde_sph/core`.
-- New APIs must be documented in docstrings and, if cross-module, briefly nd clearly summarised in `core`.
-- Do not expose or call any variables or functions cross-module without complete understanding of the behavior
-
-3. **Tests & Diagnostics**
-
-- Each agent adds or updates unit tests in `tests/` for their module.
-- Prefer small, fast tests suitable for CI.
-
-4. **Integration & Configuration**
-
-- Core agent wires new functionality via configuration (`tde_sph/config`) and `Simulation` orchestration.
-- Ensure defaults keep existing examples working.
-
-5. **Review, Run & Validate**
-
-- Run test suite and at least one example simulation (Newtonian + one GR) before considering the feature complete.
-- Resolve any interface mismatches or performance regressions.
+- this is a debugging step. Ignore any further references to agents you might find and focus on the high level fixes
 
 ### Context Optimisation Rules
 
@@ -57,49 +25,9 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 - Adhere to the established architecture: `Simulation` orchestrates pluggable components.
 - Prefer reusing existing utilities over duplicating functionality; if a new utility is required, place it in a shared, well-named location.
 
-## Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
+# Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
 
 ![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
-
-- **GOAL-003**: Extend EOS and energy accounting to include radiation pressure, energy tracking, and simple luminosity proxies.
-
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-021 | Implement combined gas + radiation pressure EOS in `tde_sph/eos/radiation_gas.py`, with consistent internal energy and temperature handling. |  |  |
-| TASK-022 | Add global energy bookkeeping in `tde_sph/core/energy_diagnostics.py` to compute kinetic, potential (BH + self-gravity), internal (thermal + radiation) and total energies per snapshot. |  |  |
-| TASK-023 | Implement simple radiative cooling / luminosity model (e.g. local cooling function or FLD-lite) in `tde_sph/radiation/simple_cooling.py`. |  |  |
-| TASK-024 | Provide diagnostic outputs for light curves (fallback rate approximation, luminosity vs time) in `tde_sph/io/diagnostics.py`. |  |  |
-| TASK-025 | Add tests ensuring energy conservation in adiabatic runs and correct response to controlled heating/cooling scenarios. |  |  |
-
-| TASK-034 | Implement accretion disc IC generator in `tde_sph/ICs/disc.py`, for now without additional considerations |  |  |
-
-
-
- - **GOAL-006**: Create a GUI as a wrapper for yaml and an upgrade to PyQt
-
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-037 | Replace Plotly 3D visualiser with PyQtGraph, to support time-scrubbing animations and optional derived quantities (e.g. temperature, energy density) as colour maps. |  |  |
-| TASK-100 | PyQT-based GUI to select and modify yaml presets and control the sim. Metric unit conversion. Large space to display PyQtGraph live data from the running sim, per-timestep snapshots when open |  |  |
-| TASK-101 | Provide a library of PyQtGraph and Matplotlib 2D and 3D visualisation options to be exposed in a GUI menu, including transparency, smoothing, iso-surface, etc|  |  |
-| TASK-038 | Provide a converter in `tools/export_to_blender.py` (or similar) that writes point clouds or volume grids suitable for Blender/ParaView.|  |  |
-| TASK-102 | Spatial and temporal output interpolation and/or smoothing, for volume graph display and export to Blender. Not to replace/overwrite the 'clean' data |  |  |
-| TASK-039 | Create example notebooks (`examples/`) showcasing a Newtonian run, a Schwarzschild GR run, and a Kerr inclined orbit run, with comparison plots. |  |  |
-| TASK-040 | Add automated regression tests (using small N) and continuous integration scripts to validate core functionality. |  |  |
-
-The code will be written in Python with NumPy/CUDA acceleration, support both full GR and Newtonian modes, and target an RTX 4090 with 64 GB RAM and a Ryzen 7800X3D.
-
-The minimum deliverable is a physically robust, architecturally clean prototype that can:
-
-- Evolve a self-gravitating star past pericentre in a fixed SMBH spacetime (Kerr/Schwarzschild).
-- Toggle between general relativistic dynamics and a purely Newtonian model.
-- Track thermodynamic and energetic quantities (gas + radiation pressure, kinetic, potential, thermal, luminosity proxies).
-- Visualise the debris in 3D via Plotly and export data for external rendering.
-  
-The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
-
-Refer to IMPLEMENTATION_PLAN.md and INSTRUCTIONS.md before making any changes to any code
-
 
 ## Software and computational constraints
 
