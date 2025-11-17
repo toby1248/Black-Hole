@@ -12,7 +12,13 @@ The minimum deliverable is a physically robust, architecturally clean prototype 
 - Visualise the debris in 3D via Plotly and export data for external rendering.
 
 The architecture prioritises **replaceable modules** over peak performance: each major physical ingredient (metric, EOS, radiation, viscosity, transport, etc.) must be encapsulated behind well-defined interfaces so that more sophisticated implementations can be swapped in later.
-Phase 1 implements a clean, modular Newtonian SPH TDE framework. Phase 2 should introduce GR-capable components (metrics, GR gravity/orbits, Hamiltonian/GR-aware integration, GR–Newtonian toggle) without breaking the existing Newtonian path. The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
+- Phase 1 implements a clean, modular Newtonian SPH TDE framework. 
+- Phase 2 introduced GR-capable components without breaking the existing Newtonian path.  
+- Phase 3 should Extend EOS and energy accounting (radiation pressure, energy tracking, luminosity proxies) without removing computationally simpler algorithms.
+
+The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
+
+
 
 ## 1. Requirements & Constraints
 
@@ -156,7 +162,7 @@ Below: physics requested + additional effects from literature, with complexity v
     - “Partial tidal disruptions of spinning eccentric white dwarfs by spinning intermediate-mass black holes” [arXiv:2401.17031];  
     - “Partial tidal disruption of White Dwarfs in off-equatorial orbits around Kerr black holes” [arXiv:2410.12727].
 
-    ## 2. Implementation Steps
+## 2. Implementation Steps
 
 ### Implementation Phase 1 — Core architecture, Newtonian SPH baseline (complete)
 
