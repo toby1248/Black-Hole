@@ -3,12 +3,13 @@
 Phase 1 implements a clean, modular Newtonian SPH TDE framework. Phase 2 should introduce GR-capable components (metrics, GR gravity/orbits, Hamiltonian/GR-aware integration, GR–Newtonian toggle) without breaking the existing Newtonian path. The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. Agents should edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots. Contextless reviewer agents will double-check the logic of each self contained section without bias and distraction 
 
 ### Steps
-1. Review `CLAUDE.md` and code in each subpackage (`core`, `sph`, `gravity`, `metric`, `integration`, `ICs`, `eos`, `radiation`, `io`, `visualization`, `config`) to align docs with actual Phase 1 state and Phase 2 goals.
-2. Define a consistent GR–Newtonian mode interface in `core` docs: how `SimulationConfig`, `Simulation`, `GravitySolver`, `Metric`, and `Integrator` must cooperate to support both modes.
-3. For advanced physics subpackages (`gravity`, `metric`, `integration`, `radiation`, partially `eos`), augment `CLAUDE.md` with brief, sourced physics notes (Tejeda+2017, Tejeda & Rosswog 2013, Liptai & Price 2019, standard GR texts), summarizing the equations and approximations agents must follow.
-4. Identify and document major architectural or numerical risks in `CLAUDE.md` where appropriate (e.g., timestep control in strong fields, energy diagnostics in GR, unit conventions), so implementation agents can design tests and validation strategies.
-5. In each subfolder containing an agent's task add a short “Phase 2 tasks for agents” section to `CLAUDE.md` in that folder, listing concrete responsibilities and cross-module expectations (e.g., `core` config flags, GR metric hooks). Ensure the coder agents also have access to the global CLAUDE.md instructions context
-6. Once the coder agent has finished these sections modify `CLAUDE.md` in the folder again to add the reviewer sub-agent prompt at the bottom of this file, and spawn the reviewer with no context outside the atomic task's directory
+1. Review `CLAUDE.md` and code in each subpackage (`core`, `sph`, `gravity`, `metric`, `integration`, `ICs`, `eos`, `radiation`, `io`, `visualization`, `config`) to align docs with actual Phase 1 state and Phase 2 goals. If there is no CLAUDE.md in any subpackage's top level folder create one.
+2. Create a NOTES.md in each folder that contains a CLAUDE.md and instruct the sub agents to use it.
+3. Define a consistent GR–Newtonian mode interface in `core` docs: how `SimulationConfig`, `Simulation`, `GravitySolver`, `Metric`, and `Integrator` must cooperate to support both modes.
+4. For advanced physics subpackages (`gravity`, `metric`, `integration`, `radiation`, partially `eos`), augment \subpackage\`CLAUDE.md` with brief, sourced physics notes (Tejeda+2017, Tejeda & Rosswog 2013, Liptai & Price 2019, standard GR texts), summarizing the equations and approximations agents must follow.
+5. Identify and document major architectural or numerical risks in \subpackage\`CLAUDE.md` where appropriate (e.g., timestep control in strong fields, energy diagnostics in GR, unit conventions), so implementation agents can design tests and validation strategies.
+6. In each subfolder containing an agent's task add a short “Phase 2 tasks for agents” section to `CLAUDE.md` in that folder, listing concrete responsibilities and cross-module expectations (e.g., `core` config flags, GR metric hooks). Ensure the coder agents also have access to the global CLAUDE.md instructions context
+7. Once the coder agent has finished these sections modify \subpackage\`CLAUDE.md` again and add to it the reviewer sub-agent prompt found at the bottom of this file, and spawn the reviewer with no context outside the atomic task's directory
 
 ### Further Considerations
    - There is potential for tech debt creation if Phase 2 modules are not built with consideration for the implementation of phases 4 and 5. Take the chance to update the API now if necessary
@@ -31,6 +32,7 @@ TASKS:
 2. Flag missing context or hidden assumptions.
 3. Suggest minimal, concrete improvements.
 4. Add to or create the local NOTES.md
+
 
 
 
