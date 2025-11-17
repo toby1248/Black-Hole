@@ -12,9 +12,9 @@ The minimum deliverable is a physically robust, architecturally clean prototype 
 - Visualise the debris in 3D via Plotly and export data for external rendering.
 
 The architecture prioritises **replaceable modules** over peak performance: each major physical ingredient (metric, EOS, radiation, viscosity, transport, etc.) must be encapsulated behind well-defined interfaces so that more sophisticated implementations can be swapped in later.
-Phase 1 implements a clean, modular Newtonian SPH TDE framework. 
-Phase 2 introduced GR-capable components without breaking the existing Newtonian path.  
-Phase 3 should Extend EOS and energy accounting (radiation pressure, energy tracking, luminosity proxies) without removing existing computationally simpler algorithms.
+- Phase 1 implements a clean, modular Newtonian SPH TDE framework. 
+- Phase 2 introduced GR-capable components without breaking the existing Newtonian path.  
+- Phase 3 should Extend EOS and energy accounting (radiation pressure, energy tracking, luminosity proxies) without removing computationally simpler algorithms.
 
 The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
 
