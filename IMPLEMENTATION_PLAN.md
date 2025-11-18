@@ -1,6 +1,8 @@
 # Phase 3 Plan - Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Complete](https://img.shields.io/badge/status-Planned-blue)
+
+### For reference only, this phase of the plan is complete. The current phase does not add new features so it is not included explicitly 
 
 This plan specifies a modular, relativistic smoothed particle hydrodynamics (SPH) framework to simulate stellar tidal disruption events (TDEs) around supermassive black holes (SMBHs). The code will be written in Python with NumPy/CUDA acceleration, support both full GR and Newtonian modes, and target an RTX 4090 with 64 GB RAM and a Ryzen 7800X3D.
 
