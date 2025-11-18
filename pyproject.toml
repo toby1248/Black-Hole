@@ -68,7 +68,13 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --strict-markers --cov=tde_sph --cov-report=term-missing"
+addopts = "-v --strict-markers"
+markers = [
+    "regression: Regression tests to catch behavior changes",
+    "fast: Fast tests (< 5 seconds)",
+    "slow: Slow tests (5-30 seconds)",
+    "gpu: Tests requiring GPU/CUDA",
+]
 
 [tool.black]
 line-length = 100

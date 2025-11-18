@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TDE-SPH Web Visualizer</title>
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="css/style.css">
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- OrbitControls for camera manipulation -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header>
+            <h1>🌌 TDE-SPH Web Visualizer</h1>
+            <p>Interactive 3D visualization of tidal disruption events</p>
+        </header>
+
+        <!-- Main content -->
+        <div id="main-container">
+            <!-- Left sidebar: Controls -->
+            <aside id="sidebar">
+                <div class="panel">
+                    <h2>Data Source</h2>
+                    <div class="control-group">
+                        <label for="data-source">Source:</label>
+                        <select id="data-source">
+                            <option value="local">Local Files</option>
+                            <option value="server">Simulation Server</option>
+                            <option value="demo">Demo Data</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group" id="file-upload-group">
+                        <label for="file-upload">Upload HDF5:</label>
+                        <input type="file" id="file-upload" accept=".h5,.hdf5" multiple>
+                        <button id="load-files-btn" class="btn btn-primary">Load Files</button>
+                    </div>
+
+                    <div class="control-group" id="server-connect-group" style="display:none;">
+                        <label for="server-url">Server URL:</label>
+                        <input type="text" id="server-url" value="http://localhost:8000" placeholder="http://localhost:8000">
+                        <button id="connect-server-btn" class="btn btn-primary">Connect</button>
+                    </div>
+
+                    <div class="control-group">
+                        <button id="load-demo-btn" class="btn btn-success">Load Demo Data</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Animation Control</h2>
+                    <div class="control-group">
+                        <button id="play-btn" class="btn btn-primary" disabled>▶ Play</button>
+                        <button id="pause-btn" class="btn btn-warning" disabled>⏸ Pause</button>
+                        <button id="step-back-btn" class="btn" disabled>⏮</button>
+                        <button id="step-fwd-btn" class="btn" disabled>⏭</button>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="snapshot-slider">Snapshot: <span id="snapshot-index">0</span> / <span id="snapshot-count">0</span></label>
+                        <input type="range" id="snapshot-slider" min="0" max="0" value="0" step="1" disabled>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="fps-slider">FPS: <span id="fps-value">30</span></label>
+                        <input type="range" id="fps-slider" min="1" max="60" value="30" step="1">
+                    </div>
+
+                    <div class="control-group">
+                        <label>Time: <span id="time-display">0.00</span></label>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Visualization</h2>
+                    <div class="control-group">
+                        <label for="color-by">Color By:</label>
+                        <select id="color-by">
+                            <option value="density">Density</option>
+                            <option value="temperature">Temperature</option>
+                            <option value="internal_energy">Internal Energy</option>
+                            <option value="velocity_magnitude">Velocity Magnitude</option>
+                            <option value="pressure">Pressure</option>
+                            <option value="entropy">Entropy</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="colormap">Colormap:</label>
+                        <select id="colormap">
+                            <option value="viridis">Viridis</option>
+                            <option value="plasma">Plasma</option>
+                            <option value="inferno">Inferno</option>
+                            <option value="hot">Hot</option>
+                            <option value="cool">Cool</option>
+                            <option value="rainbow">Rainbow</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="point-size">Point Size: <span id="point-size-value">2.0</span></label>
+                        <input type="range" id="point-size" min="0.5" max="10" value="2.0" step="0.5">
+                    </div>
+
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="log-scale-checkbox" checked>
+                            Logarithmic Scale
+                        </label>
+                    </div>
+
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="show-bh-checkbox" checked>
+                            Show Black Hole
+                        </label>
+                    </div>
+
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="show-axes-checkbox" checked>
+                            Show Axes
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Statistics</h2>
+                    <div class="stats-display">
+                        <table id="stats-table">
+                            <tr><td>Particles:</td><td id="stat-particles">0</td></tr>
+                            <tr><td>Total Mass:</td><td id="stat-mass">0.0</td></tr>
+                            <tr><td>Total Energy:</td><td id="stat-energy">0.0</td></tr>
+                            <tr><td>Min Density:</td><td id="stat-rho-min">0.0</td></tr>
+                            <tr><td>Max Density:</td><td id="stat-rho-max">0.0</td></tr>
+                            <tr><td>Min Temp:</td><td id="stat-temp-min">0.0</td></tr>
+                            <tr><td>Max Temp:</td><td id="stat-temp-max">0.0</td></tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Camera</h2>
+                    <div class="control-group">
+                        <button id="reset-camera-btn" class="btn">Reset View</button>
+                        <button id="top-view-btn" class="btn">Top View</button>
+                        <button id="side-view-btn" class="btn">Side View</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Export</h2>
+                    <div class="control-group">
+                        <button id="screenshot-btn" class="btn">📷 Screenshot</button>
+                        <button id="export-json-btn" class="btn" disabled>💾 Export JSON</button>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center: 3D Canvas -->
+            <main id="canvas-container">
+                <canvas id="three-canvas"></canvas>
+
+                <!-- Overlay info -->
+                <div id="info-overlay">
+                    <p id="loading-message">Load data to begin visualization</p>
+                    <div id="fps-counter">FPS: <span id="fps-counter-value">0</span></div>
+                </div>
+            </main>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>TDE-SPH Web Visualizer | Powered by Three.js and WebGL | <a href="https://github.com/your-repo/tde-sph" target="_blank">GitHub</a></p>
+        </footer>
+    </div>
+
+    <!-- Application scripts -->
+    <script src="js/data_loader.js"></script>
+    <script src="js/visualizer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
