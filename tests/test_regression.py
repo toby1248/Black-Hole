@@ -47,15 +47,13 @@ class TestICsRegression:
     def test_polytrope_mass_conservation(self):
         """Regression: Polytrope mass should be conserved to high precision."""
         target_mass = 1.0
-        poly = Polytrope(
-            n_particles=100,
-            polytropic_index=1.5,
-            total_mass=target_mass,
-            radius=1.0,
-            gamma=5.0/3.0
-        )
+        poly = Polytrope(gamma=5.0/3.0, random_seed=42)
 
-        pos, vel, masses, u, h = poly.generate()
+        pos, vel, masses, u, rho = poly.generate(
+            n_particles=100,
+            M_star=target_mass,
+            R_star=1.0
+        )
 
         total_mass = np.sum(masses)
         rel_error = abs(total_mass - target_mass) / target_mass
