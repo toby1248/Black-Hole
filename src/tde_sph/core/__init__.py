@@ -1,5 +1,5 @@
 """
-Core module: interfaces, simulation orchestrator, and utilities.
+Core module: interfaces, simulation orchestrator, energy diagnostics, and utilities.
 """
 
 from tde_sph.core.interfaces import (
@@ -16,6 +16,10 @@ from tde_sph.core.simulation import (
     SimulationConfig,
     SimulationState,
 )
+from tde_sph.core.energy_diagnostics import (
+    EnergyDiagnostics,
+    EnergyComponents,
+)
 
 __all__ = [
     "Metric",
@@ -28,4 +32,6 @@ __all__ = [
     "Simulation",
     "SimulationConfig",
     "SimulationState",
+    "EnergyDiagnostics",
+    "EnergyComponents",
 ]

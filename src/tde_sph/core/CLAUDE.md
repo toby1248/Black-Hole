@@ -88,6 +88,56 @@ isco_radius_threshold: float = 10.0  # Switch to Hamiltonian inside this radius
 - Default config remains Newtonian
 - GR features opt-in via explicit config
 
+## Phase 3 Goals: Energy Diagnostics & Radiation Integration
+
+### TASK-022: Global Energy Bookkeeping
+
+**Objective**: Implement `energy_diagnostics.py` for comprehensive energy tracking.
+
+**Energy Components to Track**:
+1. **Kinetic**: E_kin = Σ (1/2) m v²
+   - GR mode: use 4-velocity and proper formulation
+2. **Potential (BH gravity)**: E_pot_BH = Σ m Φ_BH(r)
+   - Newtonian: -GM/r
+   - GR: effective potential from metric
+3. **Potential (self-gravity)**: E_pot_self = (1/2) Σᵢ Σⱼ m_i m_j / |r_i - r_j|
+4. **Internal (thermal)**: E_int = Σ m u
+5. **Internal (radiation)**: E_rad = Σ m u_rad (if separated in EOS)
+6. **Radiated (cumulative)**: E_radiated = ∫ L dt
+7. **Total**: E_tot = E_kin + E_pot + E_int - E_radiated
+
+**Implementation Requirements**:
+1. Create `EnergyDiagnostics` class
+2. Provide methods:
+   - `compute_all_energies(particles, state, config)` → dict of energies
+   - `compute_energy_conservation_error()` → ΔE/E₀
+   - `log_energy_history(time, energies)` → time series
+3. Handle both Newtonian and GR modes
+4. Compute GR Hamiltonian (conserved energy) correctly
+5. Track energy errors and flag violations
+
+**Output Format**:
+- Per-snapshot energy breakdown (all components)
+- Time series: E_kin(t), E_pot(t), E_int(t), E_rad(t), E_tot(t)
+- Conservation error tracking: ΔE(t)/E₀
+
+**Tests**:
+- Adiabatic run: E_tot constant to < 0.1%
+- Isolated star: E_tot conserved (no BH)
+- Newtonian vs GR energy definitions consistent in weak field
+
+### TASK-015e: Integrate Radiation & Energy Diagnostics
+
+**Objective**: Update `Simulation` orchestrator to integrate Phase 3 modules.
+
+**Changes Required**:
+1. Add `radiation_model` to simulation state
+2. Call `radiation.compute_cooling_rate()` during evolution
+3. Apply cooling to internal energy: u += (du/dt) × dt
+4. Update energy diagnostics every snapshot
+5. Add config options for radiation on/off, cooling timescale limits
+6. Validate backward compatibility (radiation off = Phase 2 behavior)
+
 ## DO
 
 - Focus ONLY on `tde_sph/core`
@@ -96,6 +146,8 @@ isco_radius_threshold: float = 10.0  # Switch to Hamiltonian inside this radius
 - Coordinate with other modules via interfaces, not concrete implementations
 - Support both Newtonian and GR modes transparently
 - Use precision-agnostic code (FP32 default, FP64 where needed)
+- Add comprehensive energy diagnostics
+- Integrate radiation cooling seamlessly
 
 ## DO NOT
 
@@ -103,3 +155,4 @@ isco_radius_threshold: float = 10.0  # Switch to Hamiltonian inside this radius
 - Modify files in other subpackages except when explicitly instructed
 - Open or modify anything under the `prompts/` folder
 - Break existing Newtonian functionality
+- Break backward compatibility with Phase 1 & 2
