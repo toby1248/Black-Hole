@@ -1,54 +1,155 @@
-# Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
-
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
-
-- **GOAL-003**: Extend EOS and energy accounting to include radiation pressure, energy tracking, and simple luminosity proxies.
-
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-021 | Implement combined gas + radiation pressure EOS in `tde_sph/eos/radiation_gas.py`, with consistent internal energy and temperature handling. |  |  |
-| TASK-022 | Add global energy bookkeeping in `tde_sph/core/energy_diagnostics.py` to compute kinetic, potential (BH + self-gravity), internal (thermal + radiation) and total energies per snapshot. |  |  |
-| TASK-023 | Implement simple radiative cooling / luminosity model (e.g. local cooling function or FLD-lite) in `tde_sph/radiation/simple_cooling.py`. |  |  |
-| TASK-024 | Provide diagnostic outputs for light curves (fallback rate approximation, luminosity vs time) in `tde_sph/io/diagnostics.py`. |  |  |
-| TASK-025 | Add tests ensuring energy conservation in adiabatic runs and correct response to controlled heating/cooling scenarios. |  |  |
-
-| TASK-034 | Implement accretion disc IC generator in `tde_sph/ICs/disc.py`, for now without additional considerations |  |  |
+CUDA Implementation Agents — Standalone Module Replacements
 
 
+Scope
 
- - **GOAL-006**: Create a GUI as a wrapper for yaml and an upgrade to PyQt
+You are implementing CUDA-backed versions of modules that already exist and are functionally complete in the Python/NumPy codebase.
 
-| Task | Description | Completed | Date |
-|------|-------------|-----------|------|
-| TASK-037 | Replace Plotly 3D visualiser with PyQtGraph, to support time-scrubbing animations and optional derived quantities (e.g. temperature, energy density) as colour maps. |  |  |
-| TASK-100 | PyQT-based GUI to select and modify yaml presets and control the sim. Metric unit conversion. Large space to display PyQtGraph live data from the running sim, per-timestep snapshots when open |  |  |
-| TASK-099 | Professional HTML Browser-Based interface using Three.js/WebGL for 3D visualization, with real-time data streaming, time-scrubbing, and extensible UI. Alternative to PyQt for cross-platform deployment. |  |  |
-| TASK-101 | Provide a library of PyQtGraph and Matplotlib 2D and 3D visualisation options to be exposed in a GUI menu, including transparency, smoothing, iso-surface, etc|  |  |
-| TASK-038 | Provide a converter in `tools/export_to_blender.py` (or similar) that writes point clouds or volume grids suitable for Blender/ParaView.|  |  |
-| TASK-102 | Spatial and temporal output interpolation and/or smoothing, for volume graph display and export to Blender. Not to replace/overwrite the 'clean' data |  |  |
-| TASK-039 | Create example notebooks (`examples/`) showcasing a Newtonian run, a Schwarzschild GR run, and a Kerr inclined orbit run, with comparison plots. |  |  |
-| TASK-040 | Add automated regression tests (using small N) and continuous integration scripts to validate core functionality. |  |  |
+Your work must produce drop-in replacements for these modules:
+
+Same public classes, functions, and semantics.
+
+Same configuration surface (read from the same config structures).
+
+Same units, coordinate conventions, and array layouts at the interface boundary.
 
 
+Each CUDA module must be usable as a standalone backend that can be swapped for the existing module via configuration or a small dispatcher, without changing call sites.
 
-## Plan: agent instructions
-The code will be written in Python with NumPy/CUDA acceleration, support both full GR and Newtonian modes, and target an RTX 4090 with 64 GB RAM and a Ryzen 7800X3D.
+Constraints
 
-The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. Agents should edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots. Contextless reviewer agents will double-check the logic of each self contained section without bias and distraction 
+Do not change the public interfaces defined in tde_sph/core/interfaces.py.
+
+Do not modify high-level orchestration in tde_sph/core/simulation.py except for minimal, explicit backend selection.
+
+Treat the Python/NumPy code as the reference implementation; CUDA is an optimisation layer.
+
+Default to FP32 on device; use FP64 only where clearly justified and documented.
+
+Keep the existing package layout; new CUDA modules should live alongside their CPU counterparts (e.g. sph/hydro_forces_cuda.py, gravity/newtonian_cuda.py).
+
+No hidden global state; backend choice must be explicit.
 
 
-## Steps
-  1. Review `CLAUDE.md` and code in each subpackage (`core`, `sph`, `gravity`, `metric`, `integration`, `ICs`, `eos`, `radiation`, `io`, `visualization`, `config`) to align docs with actual Phase 2 state and Phase 3 goals. If there is no CLAUDE.md in any subpackage's top level folder create one.
-  2. Create a NOTES.md in each folder that contains a CLAUDE.md and instruct the sub agents to use it.
-  3. Identify and document major architectural or numerical risks in \subpackage\`CLAUDE.md` where appropriate (e.g., timestep control in strong fields, energy diagnostics in GR, unit conventions), so implementation agents can design tests and validation strategies.
-  4. In each subfolder containing an agent's task add a short “Phase 3 tasks for agents” section to `CLAUDE.md` in that folder, listing concrete responsibilities and cross-module expectations (e.g., `core` config flags, GR metric hooks). Ensure the coder agents also have access to the global CLAUDE.md instructions context
-  5. Once the coder agent has finished these sections modify \subpackage\`CLAUDE.md` again and add to it the reviewer sub-agent prompt found at the bottom of this file, and spawn the reviewer with no context outside the atomic task's directory
+Vector Arithmetic and Linear Algebra
 
-## Further Considerations
-- If goals have changed or modules have been added update the `CLAUDE.md` files with fresh information
-- Maintain full backward compatibility: Newtonian examples/tests must still pass, so new GR paths should be opt-in via config and cleanly tested.
-- FP32 by default, FP64 only where necessary, precision agnostic preferred
-- Consider compatibility with or implementation of GPU mixed precision tensor computation with linear algebra as a major benefit for current or future use
+Where feasible, recast computations as large vector and matrix operations to exploit GPU linear algebra hardware:
+
+Represent particle state as dense arrays:
+
+Positions, velocities, accelerations: float32[N, 3].
+
+Masses and other scalars: float32[N] or float32[N, 1].
+
+
+In Newtonian gravity and neighbour interactions:
+
+Use batched vector arithmetic and reductions rather than many tiny kernels.
+
+Explore formulations that map cleanly to cuBLAS-like primitives (batched GEMV/GEMM) or custom kernels with GEMM-style tiling.
+
+
+For direct particle–particle gravity:
+
+Consider expressing blocks of the interaction matrix as tiles handled via shared memory.
+
+Evaluate whether a “matrix-style” blocked formulation outperforms naive pairwise loops for your N-regime and GPU memory limits.
+
+If you reject a matrix-style approach, document why (e.g. memory footprint, O(N²) cost, worse cache behaviour).
+
+
+
+For SPH:
+
+Store neighbour lists and kernel weights as dense or batched structures that allow coalesced access and vectorised operations.
+
+Implement density, pressure, and force loops as fused kernels over these arrays.
+
+
+Workflow
+
+1. Baseline review
+
+Read the global implementation plan and instructions files.
+
+For each target module, understand the existing Python implementation and tests.
+
+Identify clean interface boundaries where a CUDA-backed version can be slotted in.
+
+
+
+2. Design the replacement module
+
+Mirror the public API of the CPU module (functions, class names, constructor signatures).
+
+Decide the internal GPU data layout:
+
+Contiguous SoA or AoS arrays optimised for vector arithmetic and coalesced loads.
+
+Pre-allocated device buffers reused across steps.
+
+
+
+
+3. Implement CUDA kernels and/or linear algebra paths
+
+Move hot loops (SPH density, forces, neighbour search, gravity, integration steps) into CUDA kernels.
+
+For Newtonian gravity, prototype both:
+
+A classic N-body kernel with shared-memory tiling and warp-level reductions.
+
+A vectorised / block-matrix formulation if it fits in memory and can leverage efficient linear algebra primitives.
+
+
+Minimise host–device transfers and kernel launch overheads.
+
+
+
+4. Integrate as a backend
+
+Expose a module-level class or factory conforming to the existing interface.
+
+Implement a small, explicit mechanism to choose CPU vs CUDA backends (e.g. config flag, simple dispatcher).
+
+Ensure Newtonian and GR modes both work with the CUDA backend where required.
+
+
+
+5. Testing and validation
+
+Add tests that compare CUDA against CPU implementations:
+
+Same inputs, numerically close outputs (tolerances appropriate to FP32).
+
+
+Cover both “vectorised linear algebra” paths and “pure kernel” paths where both exist.
+
+Include small-N regression tests suitable for CI.
+
+
+
+
+Deliverables per module
+
+For each ported module, provide:
+
+A CUDA-backed implementation file (e.g. *_cuda.py) that can act as a direct module-level replacement.
+
+Minimal integration glue to select CPU or CUDA backends.
+
+Unit tests comparing CPU vs CUDA behaviour.
+
+Short notes (e.g. NOTES.md) describing:
+
+Data layout, kernel entry points, and expected shapes/dtypes.
+
+Whether a matrix/linear-algebra formulation was used, evaluated, or rejected, and why.
+
+Any known numerical differences vs the CPU version
+
+
+
 - Don't use absolute filepaths. Export raw data to the `output` folder and all visualisations and summary documents to `results`
 - Catch and mitigate errors from extreme interactions. Identify and flag bad data and throw warnings for debug. Filter visualisation scaling for extreme outliers
 
