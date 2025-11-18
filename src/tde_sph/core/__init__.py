@@ -16,7 +16,6 @@ from tde_sph.core.simulation import (
     SimulationConfig,
     SimulationState,
 )
-from tde_sph.core.energy_diagnostics import EnergyDiagnostics
 
 __all__ = [
     "Metric",
@@ -29,5 +28,4 @@ __all__ = [
     "Simulation",
     "SimulationConfig",
     "SimulationState",
-    "EnergyDiagnostics",
 ]

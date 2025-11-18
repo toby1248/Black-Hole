@@ -1,23 +1,6 @@
-# Core Module — Implementation Notes
+# Phase 2 Implementation Notes — Core Module
 
-## Phase 3 Status
-
-- [x] EnergyDiagnostics implementation (TASK-022) — COMPLETED 2025-11-18
-
-### EnergyDiagnostics
-
-**Status**: ✅ COMPLETE
-
-**Implementation Summary**:
-- Comprehensive energy accounting: kinetic, potential (BH + self-gravity), internal (gas + radiation)
-- Thermodynamic state tracking: T, P, ρ statistics
-- Global conserved quantities: mass, momentum, angular momentum
-- GR-specific diagnostics: ISCO tracking
-- Time-series history with export capabilities
-
-See NOTES.md sections below for detailed Phase 3 implementation notes.
-
-## Phase 2 Status
+## Status
 
 - [x] Configuration extensions (TASK-015a) — COMPLETED 2025-11-17
 - [x] Simulation orchestrator updates (TASK-015b) — COMPLETED 2025-11-17
