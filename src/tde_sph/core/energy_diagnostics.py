@@ -474,6 +474,10 @@ class EnergyDiagnostics:
 
         return self.energy_history[-1].conservation_error
 
+    def clear_history(self):
+        """Clear energy history."""
+        self.energy_history = []
+
     def __repr__(self) -> str:
         """String representation."""
         n_snapshots = len(self.energy_history)
