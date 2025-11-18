@@ -41,6 +41,15 @@ from tde_sph.visualization.interpolation import (
     particles_to_slice_2d,
 )
 
+# Matplotlib visualization library
+from tde_sph.visualization.viz_library import (
+    MatplotlibVisualizer,
+    quick_density_slice,
+    quick_energy_plot,
+    quick_phase_diagram,
+    quick_radial_profile,
+)
+
 __all__ = [
     # Plotly
     'Plotly3DVisualizer',
@@ -56,4 +65,10 @@ __all__ = [
     'SmoothingFilters',
     'particles_to_grid_3d',
     'particles_to_slice_2d',
+    # Matplotlib Library
+    'MatplotlibVisualizer',
+    'quick_density_slice',
+    'quick_energy_plot',
+    'quick_phase_diagram',
+    'quick_radial_profile',
 ]
