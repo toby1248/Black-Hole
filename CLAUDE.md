@@ -1,144 +1,138 @@
----
-goal: Relativistic SPH framework for stellar tidal disruption events around SMBHs (Python/NumPy/CUDA)
-version: 1.0
-date_created: 2025-11-15
-last_updated: 2025-11-15
-owner: TDE-SPH Dev Team
+goal: CUDA-accelerated backend for existing TDE-SPH modules (drop-in, standalone replacements)
+version: 1.1
+date_created: 2025-11-18
+last_updated: 2025-11-18
+owner: TDE-SPH CUDA Team
 status: Planned
-tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
----
+tags: [cuda, backend, optimisation, SPH, gravity, linear-algebra, Python]
+Role and Scope
+You are working in a module directory that already has a working Python/NumPy implementation.
 
-## Feature Implementation System Guidelines
+Your mission is to implement a CUDA-backed module that can fully replace this directory’s existing runtime behaviour without changing how other modules call into it.
 
-### Parallel Feature Implementation Priorities
+Public API must remain identical (class names, method signatures, free functions).
 
-- Prefer **small, well-scoped tasks** over monolithic changes.
-- Use **parallel agents** when different modules can be changed independently (e.g. `sph/`, `gravity/`, `metric/`, `eos/`, `io/`).
-- Avoid parallel edits to the **same file or tightly coupled module** to minimise merge conflicts and integration bugs.
+Behaviour must match the CPU implementation within agreed numerical tolerances.
 
-### Parallel Feature Implementation Workflow
+CUDA-specific data structures and kernels must remain internal to this module.
 
-1. **Design & Ownership**
+Core Expectations
+Module-level replacement
 
-- Identify affected modules (core, sph, gravity, metric, eos, radiation, integration, ICs, io, visualization, config).
-- Assign at most one agent per module for the duration of the feature.
+The module you implement (e.g. hydro_forces_cuda.py, newtonian_cuda.py) must be usable as a standalone substitute:
 
-2. **Module-local Implementation**
+Existing code should be able to switch imports from CPU to CUDA versions without further changes.
 
-- Each agent implements changes **only inside its module**, respecting interfaces from `tde_sph/core`.
-- New APIs must be documented in docstrings and, if cross-module, briefly nd clearly summarised in `core`.
-- Do not expose or call any variables or functions cross-module without complete understanding of the behavior
+No changes to global interfaces or orchestration code from inside this module.
 
-3. **Tests & Diagnostics**
+Vector arithmetic and matrix-based layouts
 
-- Each agent adds or updates unit tests in `tests/` for their module.
-- Prefer small, fast tests suitable for CI.
+Express particle data as large contiguous vectors and matrices:
 
-4. **Integration & Configuration**
+Positions, velocities, accelerations: float32[N, 3] (or SoA with three float32[N] arrays).
 
-- Core agent wires new functionality via configuration (`tde_sph/config`) and `Simulation` orchestration.
-- Ensure defaults keep existing examples working.
+Masses and scalar fields: float32[N] or float32[N, 1].
 
-5. **Review, Run & Validate**
+Design kernels to operate on these arrays using:
 
-- Run test suite and at least one example simulation (Newtonian + one GR) before considering the feature complete.
-- Resolve any interface mismatches or performance regressions.
+Vector arithmetic in a data-parallel style.
 
-### Context Optimisation Rules
+Blocked loads into shared memory to emulate matrix tiles.
 
-- When analysing code, keep **comments intact** unless they are clearly stale or misleading.
-- Each agent should limit changes to its **designated module**, except when explicitly instructed.
-- Small, cross-cutting updates (docs, config defaults) should be coordinated through the **core** or **config** modules.
+For Newtonian gravity in particular:
 
-### Feature Implementation Guidelines
+Investigate whether the force calculation can be structured as:
 
-- **CRITICAL:** Make minimal, well-motivated changes; keep diffs focused.
-- **CRITICAL:** Preserve existing naming conventions and file organisation.
-- Adhere to the established architecture: `Simulation` orchestrates pluggable components.
-- Prefer reusing existing utilities over duplicating functionality; if a new utility is required, place it in a shared, well-named location.
+Blocked interaction matrices processed tile-by-tile (matrix-style N-body).
 
-## Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
+Or batched vector operations that resemble matrix–vector products.
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+Decide and document whether a linear-algebra-style formulation (possibly using cuBLAS or custom GEMM-like kernels) is beneficial for your target N:
 
-- **GOAL-003**: Extend EOS and energy accounting to include radiation pressure, energy tracking, and simple luminosity proxies.
-- **GOAL-006**: Create a GUI as a wrapper for yaml and an upgrade to PyQt and HTML
+If yes, implement and describe the scheme.
 
-The code will be written in Python with NumPy/CUDA acceleration, support both full GR and Newtonian modes, and target an RTX 4090 with 64 GB RAM and a Ryzen 7800X3D.
+If no, justify briefly (e.g. O(N²) memory/compute, performance vs classic pairwise kernel).
 
-The minimum deliverable is a physically robust, architecturally clean prototype that can:
+Respect core interfaces
 
-- Evolve a self-gravitating star past pericentre in a fixed SMBH spacetime (Kerr/Schwarzschild).
-- Toggle between general relativistic dynamics and a purely Newtonian model.
-- Track thermodynamic and energetic quantities (gas + radiation pressure, kinetic, potential, thermal, luminosity proxies).
-- Visualise the debris in 3D via Plotly and export data for external rendering.
-  
-The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
+Conform strictly to abstract base classes in tde_sph/core/interfaces.py.
 
-Refer to IMPLEMENTATION_PLAN.md and INSTRUCTIONS.md before making any changes to any code
+Do not change these ABCs here.
 
+Add optional helpers only if they do not break any existing callers.
 
-## Software and computational constraints
+Configuration and modes
 
-- **CON-001**: Primary implementation language is Python 3.11+; heavy numerics offloaded to:
-  - CUDA kernels via Numba, CuPy, or PyTorch/JAX (choice must support custom kernels).  
-  - NumPy for CPU fallback.
+Use the existing config structures for:
 
-- **CON-002**: Target hardware: Single RTX 4090 with 24 GB VRAM, 64 GB system RAM, Ryzen 7800X3D.  
+CPU vs CUDA backend selection.
 
-- **CON-003**: Avoid dependence on heavy, non-Python ecosystems (e.g. no mandatory FORTRAN/C++ build system in v1). C/C++ extensions allowed for performance-critical hot spots later.
+Newtonian vs GR or other physics modes.
 
-- **CON-004**: Plotting via Plotly 3D volume/point cloud; data export to HDF5/Parquet for external rendering (e.g. Blender, ParaView).
+Avoid new global flags; backend selection should be explicit and local.
 
-- **CON-005**: Code must be unit-testable (pytest) and support automated regression tests with fixed random seeds.
-  
-- **CON-005**: FP32 by default, precision agnostic wherever possible, use of or support for fast CUDA tensor operations wherever possible
+Numerics, precision, and stability
 
+Default to FP32 on the GPU; upcast to FP64 only for clearly identified sensitive operations.
 
-## Guidelines and patterns
+Be explicit where dtypes change between host and device.
 
-- **GUD-001**: All physics modules (gravity, metric, EOS, radiation, viscosity, transport) must implement clearly specified Python interfaces so they can be swapped with alternative implementations.
+Ensure that vectorised and matrix-style implementations remain numerically stable for long integrations (especially gravity).
 
-- **GUD-002**: Separate *configuration* (YAML/JSON) from *code* to enable reproducible runs with different BH mass/spin, stellar models, and orbits.
+Performance discipline
 
-- **GUD-003**: Use dimensionless units internally (e.g. \( G = c = M_\mathrm{BH} = 1 \)) with conversion utilities for physical units.
+Minimise host–device transfers and small kernel launches.
 
-- **PAT-001**: Adopt a “system + component” architecture: `Simulation` orchestrates components (`Metric`, `GravitySolver`, `SPHSolver`, `EOS`, `RadiationModel`, `TimeStepper`, `ICGenerator`, `IOManager`, `Visualizer`).
+Prefer:
 
+Persistent device arrays for particle state.
 
----
+Fused kernels for SPH loops and neighbour interactions.
 
-## Risks & Assumptions
+Tiled N-body kernels for Newtonian gravity.
 
-- **RISK-001 (Complexity of GR integration)**: Implementing Kerr metric correctly (especially Christoffel symbols and coordinate singularities) is error-prone. Mitigation: rely on well-tested expressions from Tejeda et al. (2017) and Liptai & Price (2019), unit-test against analytic geodesics.
+Profile both “pure kernel” and “linear algebra-style” variants when both exist; keep the faster one as the default and leave the other as an optional code path if it is still useful.
 
-- **RISK-002 (Performance bottlenecks in Python)**: If GPU kernels and I/O are not carefully designed, Python overhead could limit performance at large N. Mitigation: profile early, use Numba/CUDA or CuPy for heavy loops, and minimise Python-level per-particle operations.
+Testing Expectations
+For each major public method, create tests that:
 
-- **RISK-003 (Self-gravity accuracy)**: Approximating self-gravity Newtonianly while BH gravity is relativistic may introduce inaccuracies for very deep encounters. Mitigation: monitor parameter regimes where hybrid approximation is valid (guided by Tejeda et al. 2017 and later TDE work).
+Instantiate both CPU and CUDA implementations.
 
-- **RISK-004 (Radiation transport oversimplification)**: Simple cooling/luminosity models may not capture full observable signatures. Mitigation: treat radiation module as explicitly pluggable; document limitations clearly.
+Run identical, small test problems.
 
-- **RISK-005 (Validation data)**: Exact benchmarks for full 3D GRSPH TDEs are rare; most comparisons will be qualitative. Mitigation: compare against published GRSPH results (Liptai et al. 2019; recent nozzle shock and SPH-EXA papers) for trends and morphology.
+Compare outputs (arrays, scalars) within reasonable tolerances.
 
-- **ASSUMPTION-001**: Fixed background metric (non-evolving BH spacetime) is sufficient; we do not couple to full numerical relativity.
+Include tests that specifically exercise:
 
-- **ASSUMPTION-002**: Self-gravity of the star and debris can be modelled Newtonianly without severely compromising the key TDE dynamics for the parameter space of interest.
+Vectorised kernels over large arrays.
 
-- **ASSUMPTION-003**: RTX 4090 VRAM and system RAM are sufficient for the target particle counts (10⁵–10⁷) given efficient data structures.
+Any matrix-style or cuBLAS-based implementation you introduce.
 
----
+Ensure tests are small enough for CI but sensitive enough to catch indexing errors, race conditions, and precision regressions.
 
-## Related Specifications / Further Reading
+Local Agent Tasks (per module)
+Inside this directory:
 
-- Tejeda, E., Gafton, E., Rosswog, S. & Korobkin, O. (2017), MNRAS, 469, 4483 – “Tidal disruptions by rotating black holes: relativistic hydrodynamics with Newtonian codes” [arXiv:1701.00303].
-- Liptai, D. & Price, D. J. (2019), MNRAS, 485, 819 – “General relativistic smoothed particle hydrodynamics” [arXiv:1901.08064].
-- Liptai, D., Price, D. J. & Lodato, G. (2019), MNRAS, 487, 4790 – “Disc formation from tidal disruption of stars on eccentric orbits by Kerr black holes using GRSPH” [arXiv:1910.10154].
-- Price, D. J. (2012), JCP, 231, 759 – SPH review.
-- Price, D. J. et al. (2018), PASA, 35, e031 – PHANTOM SPH code.
-- “Converged simulations of the nozzle shock in tidal disruption events” (2025, GRSPH + APR).
-- Cabezón et al. (2025+), “Tidal disruption events with SPH-EXA: resolving the return of the stream” [arXiv:2510.26663].
-- Mahapatra et al. (2024–2025), “Partial tidal disruptions of spinning eccentric white dwarfs …” [arXiv:2401.17031, 2410.12727].
-- Lupi (2025), “A general relativistic magnetohydrodynamics extension to mesh-less schemes in the code GIZMO” [arXiv:2506.15775].
-- Lu & Bonnerot (2019); Bonnerot et al. (2023), “Spin-induced offset stream self-crossing shocks in tidal disruption events” [arXiv:2303.16230].
-- Guillochon, J. & Ramirez-Ruiz, E. (2013), ApJ, 767, 25 – stellar disruption simulations and stellar structure fits.
-- “Relativistic effects on tidal disruption kicks of solitary stars” (MNRAS 449, 771, 2015).
+Map each public class/method/function in the CPU module to the CUDA-backed version.
+
+Design data layouts and kernels with vector arithmetic and large-array operations in mind.
+
+For Newtonian gravity modules, explicitly evaluate:
+
+Classic pairwise kernels with shared-memory tiling.
+
+Matrix-style or batched linear algebra formulations.
+And record your decision and rationale.
+
+Implement kernels and integration glue for this module only.
+
+Add or extend tests comparing CPU and CUDA implementations.
+
+Document:
+
+Data layouts and dtypes.
+
+Where linear algebra primitives are used.
+
+Any intentional approximations or limitations.
+
