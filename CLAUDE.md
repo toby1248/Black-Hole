@@ -2,7 +2,7 @@
 goal: Relativistic SPH framework for stellar tidal disruption events around SMBHs (Python/NumPy/CUDA)
 version: 1.0
 date_created: 2025-11-15
-last_updated: 2025-11-17
+last_updated: 2025-11-15
 owner: TDE-SPH Dev Team
 status: Planned
 tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
@@ -10,7 +10,39 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 
 ## Feature Implementation System Guidelines
 
-- this is a debugging step. Ignore any further references to agents you might find and focus on the high level fixes
+### Parallel Feature Implementation Priorities
+
+- Prefer **small, well-scoped tasks** over monolithic changes.
+- Use **parallel agents** when different modules can be changed independently (e.g. `sph/`, `gravity/`, `metric/`, `eos/`, `io/`).
+- Avoid parallel edits to the **same file or tightly coupled module** to minimise merge conflicts and integration bugs.
+
+### Parallel Feature Implementation Workflow
+
+1. **Design & Ownership**
+
+- Identify affected modules (core, sph, gravity, metric, eos, radiation, integration, ICs, io, visualization, config).
+- Assign at most one agent per module for the duration of the feature.
+
+2. **Module-local Implementation**
+
+- Each agent implements changes **only inside its module**, respecting interfaces from `tde_sph/core`.
+- New APIs must be documented in docstrings and, if cross-module, briefly nd clearly summarised in `core`.
+- Do not expose or call any variables or functions cross-module without complete understanding of the behavior
+
+3. **Tests & Diagnostics**
+
+- Each agent adds or updates unit tests in `tests/` for their module.
+- Prefer small, fast tests suitable for CI.
+
+4. **Integration & Configuration**
+
+- Core agent wires new functionality via configuration (`tde_sph/config`) and `Simulation` orchestration.
+- Ensure defaults keep existing examples working.
+
+5. **Review, Run & Validate**
+
+- Run test suite and at least one example simulation (Newtonian + one GR) before considering the feature complete.
+- Resolve any interface mismatches or performance regressions.
 
 ### Context Optimisation Rules
 
@@ -25,9 +57,19 @@ tags: [feature, architecture, GR, SPH, tidal-disruption, CUDA, Python]
 - Adhere to the established architecture: `Simulation` orchestrates pluggable components.
 - Prefer reusing existing utilities over duplicating functionality; if a new utility is required, place it in a shared, well-named location.
 
-# Implementation Phase 3 — Thermodynamics, energies & luminosity plus a visuals upgrade
+The code will be written in Python with NumPy/CUDA acceleration, support both full GR and Newtonian modes, and target an RTX 4090 with 64 GB RAM and a Ryzen 7800X3D.
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+The minimum deliverable is a physically robust, architecturally clean prototype that can:
+
+- Evolve a self-gravitating star past pericentre in a fixed SMBH spacetime (Kerr/Schwarzschild).
+- Toggle between general relativistic dynamics and a purely Newtonian model.
+- Track thermodynamic and energetic quantities (gas + radiation pressure, kinetic, potential, thermal, luminosity proxies).
+- Visualise the debris in 3D via Plotly and export data for external rendering.
+  
+The goal is to extend, not rewrite: add new classes and configs, tighten interfaces, and ensure IO/visualization can distinguish “mode” and units. This plan assumes future agents will edit only where needed, primarily per-submodule `CLAUDE.md` plus select code hotspots.
+
+Refer to IMPLEMENTATION_PLAN.md and INSTRUCTIONS.md before making any changes to any code
+
 
 ## Software and computational constraints
 
