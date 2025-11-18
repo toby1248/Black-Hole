@@ -2,4 +2,6 @@
 Radiation module: cooling models and radiative transfer.
 """
 
-__all__ = []
+from .simple_cooling import SimpleCoolingModel, CoolingRates
+
+__all__ = ["SimpleCoolingModel", "CoolingRates"]
