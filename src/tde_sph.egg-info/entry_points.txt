@@ -1,2 +1,0 @@
-[console_scripts]
-tde-sph = tde_sph.cli:main
