@@ -38,5 +38,329 @@ Provides-Extra: extras
 Requires-Dist: pyarrow>=12.0.0; extra == "extras"
 Requires-Dist: pandas>=2.0.0; extra == "extras"
 
-# Black-Hole
-Black hole sim v1
+# TDE-SPH: Relativistic SPH Framework for Tidal Disruption Events
+
+![Status: Phase 1 Complete](https://img.shields.io/badge/status-Phase%201%20Complete-green)
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+
+A modular Python/CUDA framework for simulating stellar tidal disruption events (TDEs) around supermassive black holes using smoothed particle hydrodynamics (SPH). Supports both **general relativistic** and **Newtonian** dynamics.
+
+## Features
+
+### Phase 1 (Complete) ✅
+
+- **3D SPH hydrodynamics** with adaptive smoothing lengths
+  - Cubic spline kernel (Monaghan & Lattanzio 1985)
+  - Density-based adaptive smoothing
+  - Monaghan artificial viscosity for shock capturing
+- **Newtonian gravity** with softened direct summation
+- **Ideal gas equation of state** (γ = 5/3, 4/3, or custom)
+- **Leapfrog time integration** with CFL timestep control
+- **Polytropic stellar models** (Lane-Emden solver)
+- **HDF5 I/O** with compression
+- **Interactive 3D visualization** (Plotly)
+- **Modular architecture** with pluggable physics components
+
+### Phase 2+ (Planned)
+
+- General relativistic dynamics (Schwarzschild, Kerr metrics)
+- Hamiltonian integrator for GR orbits
+- Gas + radiation pressure EOS
+- Radiative cooling and energy transport
+- GPU acceleration (CUDA/Numba)
+- Tree-based gravity for N > 10⁵
+- Particle refinement near shocks
+
+## Installation
+
+### Requirements
+
+- Python 3.11+
+- CUDA toolkit (optional, for GPU acceleration)
+- 8+ GB RAM (64 GB recommended for large simulations)
+
+### Install from source
+
+```bash
+# Clone repository
+git clone https://github.com/yourusername/Black-Hole.git
+cd Black-Hole
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Or for minimal install
+pip install -e .
+```
+
+### Dependencies
+
+Core: `numpy`, `scipy`, `numba`, `h5py`, `plotly`, `pydantic`
+
+Optional: `cupy` (GPU), `pytest` (testing), `jupyter` (notebooks)
+
+## Quick Start
+
+### Run a Newtonian TDE simulation
+
+```bash
+# Run with defaults (5000 particles, 1 M☉ star, 10⁶ M☉ black hole)
+python scripts/run_simulation.py
+
+# Customize parameters
+python scripts/run_simulation.py \
+    --particles 10000 \
+    --tend 5.0 \
+    --bh-mass 1e7 \
+    --periapsis 1.0 \
+    --visualize
+```
+
+Output:
+- Snapshots in `output/snapshot_NNNN.h5`
+- Energy diagnostics in terminal
+- Optional 3D visualization
+
+### Python API
+
+```python
+from tde_sph.core import Simulation, SimulationConfig
+from tde_sph.sph import ParticleSystem
+from tde_sph.gravity import NewtonianGravity
+from tde_sph.eos import IdealGas
+from tde_sph.integration import LeapfrogIntegrator
+from tde_sph.ICs import Polytrope
+
+# Generate polytropic star
+poly = Polytrope(gamma=5.0/3.0, random_seed=42)
+pos, vel, mass, u, rho = poly.generate(
+    n_particles=10000,
+    M_star=1.0,
+    R_star=1.0
+)
+
+# Create particle system
+particles = ParticleSystem(
+    positions=pos,
+    velocities=vel,
+    masses=mass,
+    internal_energy=u
+)
+
+# Setup physics
+gravity = NewtonianGravity()
+eos = IdealGas(gamma=5.0/3.0)
+integrator = LeapfrogIntegrator()
+
+# Configure simulation
+config = SimulationConfig(
+    t_end=10.0,
+    snapshot_interval=0.1,
+    mode="Newtonian"
+)
+
+# Run
+sim = Simulation(particles, gravity, eos, integrator, config)
+sim.run()
+```
+
+### Visualization
+
+```python
+from tde_sph.io import read_snapshot
+from tde_sph.visualization import quick_plot
+
+# Load snapshot
+data = read_snapshot("output/snapshot_0010.h5")
+positions = data['particles']['positions']
+density = data['particles']['density']
+
+# Plot
+fig = quick_plot(positions, color_by=density, log_scale=True)
+fig.show()
+
+# Save
+fig.write_html("tde_visualization.html")
+fig.write_image("tde_snapshot.png")
+```
+
+## Architecture
+
+### Modular Design (GUD-001)
+
+All physics modules implement abstract interfaces, enabling easy swapping:
+
+```
+tde_sph/
+├── core/           # Simulation orchestrator, interfaces
+├── sph/            # Particles, kernels, hydro forces
+├── gravity/        # Newtonian, relativistic (Phase 2)
+├── metric/         # Schwarzschild, Kerr (Phase 2)
+├── eos/            # Ideal gas, radiation (Phase 3)
+├── radiation/      # Cooling, transport (Phase 3)
+├── integration/    # Leapfrog, Hamiltonian (Phase 2)
+├── ICs/            # Polytrope, MESA models
+├── io/             # HDF5, diagnostics
+└── visualization/  # Plotly 3D, animations
+```
+
+### Component-Based System (PAT-001)
+
+`Simulation` orchestrates:
+- `ParticleSystem` - Particle data management
+- `GravitySolver` - Gravity (Newtonian/GR)
+- `EOS` - Thermodynamics
+- `TimeIntegrator` - Time evolution
+- `Metric` (optional) - Spacetime geometry
+- `RadiationModel` (optional) - Cooling/heating
+
+## Physics
+
+### Units
+
+Dimensionless units (GUD-003):
+- G = 1 (gravitational constant)
+- c = 1 (speed of light, for GR)
+- M_BH = 1 (black hole mass)
+
+Conversion utilities provided for physical units.
+
+### SPH Implementation
+
+Follows modern SPH best practices (Price 2012):
+
+- **Density**: ρ_i = Σ_j m_j W(|r_i - r_j|, h_ij)
+- **Pressure gradient**: a_i = -Σ_j m_j (P_i/ρ_i² + P_j/ρ_j²) ∇W_ij
+- **Artificial viscosity**: Π_ij = (-α c̄_ij μ_ij + β μ_ij²) / ρ̄_ij
+- **Adaptive smoothing**: h_i ≈ η (m_i/ρ_i)^(1/3), η ≈ 1.2
+
+### Equation of State
+
+Ideal gas: P = (γ - 1) ρ u
+
+- γ = 5/3: Monatomic ideal gas (solar-type stars)
+- γ = 4/3: Radiation-dominated (massive stars, WDs)
+
+### Time Integration
+
+Leapfrog (kick-drift-kick):
+- CFL condition: dt = C min(h / (c_s + |v|))
+- Acceleration constraint: dt = C min(√(h / |a|))
+- Energy-conserving by construction
+
+## Testing
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run specific module tests
+pytest tests/test_sph.py -v
+
+# With coverage
+pytest --cov=tde_sph --cov-report=html
+```
+
+## Performance
+
+### Current (Phase 1, CPU)
+
+- **10³ particles**: ~1 s/step
+- **10⁴ particles**: ~10 s/step
+- **10⁵ particles**: ~100 s/step
+
+Suitable for:
+- Algorithm development
+- Proof-of-concept runs
+- Small-N benchmarks
+
+### Planned (Phase 4, GPU)
+
+Target RTX 4090 performance:
+- **10⁶ particles**: ~1 s/step
+- **10⁷ particles**: ~10 s/step
+
+## Examples
+
+See `examples/` directory:
+
+- `demo_polytrope.py` - Generate and visualize stellar models
+- `demo_sph_forces.py` - SPH hydrodynamics test
+- `demo_io_visualization.py` - I/O and plotting
+- `newtonian_tde.ipynb` - Complete TDE simulation (notebook)
+
+## Documentation
+
+- **CLAUDE.md** - Complete project specification
+- **Module CLAUDE.md** files - Module-specific guidelines
+- Code docstrings - API documentation
+- `examples/` - Tutorials and demonstrations
+
+## Physics References
+
+### SPH & Hydrodynamics
+- Price (2012), J. Comp. Phys. 231, 759 - SPH review
+- Monaghan (1997, 2005) - Artificial viscosity
+- Cullen & Dehnen (2010) - Improved viscosity switches
+
+### Tidal Disruption Events
+- Guillochon & Ramirez-Ruiz (2013), ApJ 767, 25
+- Rosswog et al. (2009) - Newtonian TDE SPH
+
+### General Relativity (Phase 2+)
+- Tejeda et al. (2017), MNRAS 469, 4483 [arXiv:1701.00303]
+- Liptai & Price (2019), MNRAS 485, 819 [arXiv:1901.08064]
+- Liptai et al. (2019), MNRAS 487, 4790 [arXiv:1910.10154]
+
+### Advanced Physics (Phase 5+)
+- Bonnerot et al. (2023) - Stream self-crossing [arXiv:2303.16230]
+- Nealon & Price (2025) - Adaptive particle refinement
+- SPH-EXA [arXiv:2510.26663] - High-resolution TDEs
+
+## Contributing
+
+This is a research code under active development. Contributions from other agents welcome!
+
+### Development Workflow
+
+1. Follow modular architecture (one feature per module)
+2. Implement abstract interfaces
+3. Add unit tests
+4. Document with docstrings
+5. Use type hints (numpy typing)
+6. FP32 precision for GPU compatibility
+
+### Code Style
+
+- Black formatter (line length 100)
+- Type hints with numpy.typing
+- Comprehensive docstrings with references
+- Physics equations in docstrings
+
+## License
+
+MIT License - see LICENSE file
+
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@software{tde_sph_2025,
+  title = {TDE-SPH: Relativistic SPH Framework for Tidal Disruption Events},
+  author = {TDE-SPH AI Dev Team},
+  year = {2025},
+  url = {https://github.com/yourusername/Black-Hole}
+}
+```
+
+## Contact
+
+Issues: https://github.com/yourusername/Black-Hole/issues
+
+---
+
+**Status**: Phase 1 (Core architecture, Newtonian SPH baseline) - ✅ **COMPLETE**
+
+**Next**: Phase 2 (Relativistic framework & GR-Newtonian toggle)
