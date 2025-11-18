@@ -726,3 +726,7 @@ def compute_radial_profile(
             profile[i] = np.sum(masses[mask] * quantities[mask]) / np.sum(masses[mask])
 
     return r_bins.astype(np.float32), profile
+
+
+# Backward compatibility alias
+DiagnosticWriter = DiagnosticsWriter
