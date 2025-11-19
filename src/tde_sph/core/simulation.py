@@ -35,6 +35,19 @@ from tde_sph.sph import (
     update_smoothing_lengths,
     compute_hydro_acceleration,
 )
+# GPU imports
+try:
+    from tde_sph.gpu import (
+        HAS_CUDA,
+        GPUManager,
+        compute_gravity_bruteforce_gpu,
+        compute_density_gpu,
+        compute_hydro_gpu,
+        update_smoothing_lengths_gpu
+    )
+except ImportError:
+    HAS_CUDA = False
+    GPUManager = None
 
 
 NDArrayFloat = npt.NDArray[np.float32]
@@ -78,7 +91,7 @@ class SimulationConfig(BaseModel):
     cfl_factor: float = Field(default=0.3, gt=0.0, le=1.0, description="CFL safety factor")
 
     # I/O
-    output_dir: str = Field(default="output", description="Output directory path")
+    output_dir: str = Field(default="outputs/default_run", description="Output directory path")
     snapshot_interval: float = Field(default=0.1, gt=0.0, description="Snapshot output interval")
     log_interval: float = Field(default=0.01, gt=0.0, description="Log output interval")
 
@@ -397,6 +410,17 @@ class Simulation:
         self.state.time = self.config.t_start
         self.state.dt = self.config.dt_initial
 
+        # GPU Setup
+        self.use_gpu = HAS_CUDA
+        self.gpu_manager = None
+        if self.use_gpu:
+            try:
+                self.gpu_manager = GPUManager(self.particles)
+                self._log("GPU acceleration enabled (CUDA)")
+            except Exception as e:
+                self._log(f"GPU initialization failed: {e}")
+                self.use_gpu = False
+
         # Log initialization
         if self.config.verbose:
             self._log(f"Initialized {self.config.mode} TDE-SPH simulation")
@@ -507,6 +531,9 @@ class Simulation:
         forces : Dict[str, NDArrayFloat]
             Dictionary with 'gravity', 'hydro', 'total' accelerations (N, 3).
         """
+        if self.use_gpu:
+            return self._compute_forces_gpu()
+
         # 1. Find neighbours and compute densities
         neighbour_lists, _ = find_neighbours_bruteforce(
             self.particles.positions,
@@ -563,6 +590,93 @@ class Simulation:
             'hydro': a_hydro,
             'total': a_total,
             'du_dt': du_dt_hydro,  # For energy update
+        }
+
+    def _compute_forces_gpu(self) -> Dict[str, NDArrayFloat]:
+        """Compute forces using GPU acceleration."""
+        # Sync CPU -> GPU
+        self.gpu_manager.sync_to_device(self.particles)
+        
+        # 1. Update smoothing lengths (Adaptive)
+        # This updates h on GPU
+        self.gpu_manager.h = update_smoothing_lengths_gpu(
+            self.gpu_manager.pos,
+            self.gpu_manager.h,
+            target_neighbours=50,
+            tolerance=0.05,
+            max_iter=50
+        )
+        
+        # 2. Compute Density
+        # Reset density
+        self.gpu_manager.rho.fill(0.0)
+        compute_density_gpu(
+            self.gpu_manager.pos,
+            self.gpu_manager.mass,
+            self.gpu_manager.h,
+            self.gpu_manager.rho
+        )
+        
+        # 3. Update Thermodynamics (EOS)
+        # Sync density back
+        self.particles.density = self.gpu_manager.rho.get() # .get() is cupy to numpy
+        
+        # Update EOS on CPU
+        self.update_thermodynamics()
+        
+        # Sync P, cs back to GPU
+        import cupy as cp
+        self.gpu_manager.pressure = cp.asarray(self.particles.pressure)
+        self.gpu_manager.cs = cp.asarray(self.particles.sound_speed)
+        
+        # 4. Gravity
+        self.gpu_manager.acc_grav.fill(0.0)
+        G = 1.0
+        if hasattr(self.gravity_solver, 'G'):
+            G = float(self.gravity_solver.G)
+            
+        compute_gravity_bruteforce_gpu(
+            self.gpu_manager.pos,
+            self.gpu_manager.mass,
+            self.gpu_manager.h,
+            self.gpu_manager.acc_grav,
+            G
+        )
+        
+        # 5. Hydro
+        self.gpu_manager.acc_hydro.fill(0.0)
+        self.gpu_manager.du_dt.fill(0.0)
+        
+        compute_hydro_gpu(
+            self.gpu_manager.pos,
+            self.gpu_manager.vel,
+            self.gpu_manager.mass,
+            self.gpu_manager.h,
+            self.gpu_manager.rho,
+            self.gpu_manager.pressure,
+            self.gpu_manager.cs,
+            self.gpu_manager.acc_hydro,
+            self.gpu_manager.du_dt,
+            self.config.artificial_viscosity_alpha,
+            self.config.artificial_viscosity_beta
+        )
+        
+        # Sync results back to CPU
+        
+        # Sync results back to CPU
+        # We need accelerations for the integrator
+        a_grav = self.gpu_manager.acc_grav.get()
+        a_hydro = self.gpu_manager.acc_hydro.get()
+        du_dt = self.gpu_manager.du_dt.get()
+        
+        # Also sync h back because it was updated
+        self.particles.smoothing_lengths = self.gpu_manager.h.get()
+        
+        return {
+            'gravity': a_grav,
+            'hydro': a_hydro,
+            'total': a_grav + a_hydro,
+            'du_dt': du_dt
         }
 
     def step(self):

@@ -19,6 +19,173 @@ from typing import List, Tuple, Optional
 NDArrayFloat = npt.NDArray[np.float32]
 
 
+import numpy as np
+import numpy.typing as npt
+from typing import List, Tuple, Optional
+
+try:
+    from numba import njit, prange
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+    prange = range
+    def njit(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
+# Type alias for clarity
+NDArrayFloat = npt.NDArray[np.float32]
+
+
+@njit(fastmath=True)
+def _kernel_gradient_cubic_spline_numba(r_vec, h, dim=3):
+    """
+    Compute gradient of cubic spline kernel ∇W(r, h).
+    Inline implementation for Numba.
+    """
+    r = np.sqrt(r_vec[0]*r_vec[0] + r_vec[1]*r_vec[1] + r_vec[2]*r_vec[2])
+    
+    if r == 0.0:
+        return np.zeros(3, dtype=np.float32)
+        
+    q = r / h
+    
+    # Sigma for 3D
+    sigma = 1.0 / np.pi
+    
+    # dw/dq
+    dw = 0.0
+    if q < 1.0:
+        dw = -3.0 * q + 2.25 * q * q
+    elif q < 2.0:
+        dw = -0.75 * (2.0 - q) * (2.0 - q)
+        
+    # dW/dr = (sigma / h^(d+1)) * dw
+    # grad W = (dW/dr) * (r_vec / r)
+    
+    factor = (sigma / (h**(dim + 1))) * dw / r
+    
+    return np.array([factor * r_vec[0], factor * r_vec[1], factor * r_vec[2]], dtype=np.float32)
+
+
+@njit(parallel=True, fastmath=True)
+def _compute_hydro_numba(
+    positions, velocities, masses, densities, pressures, sound_speeds, smoothing_lengths,
+    neighbour_indices, neighbour_offsets,
+    alpha, beta, eta
+):
+    """Numba implementation of hydro acceleration."""
+    N = len(positions)
+    accel = np.zeros((N, 3), dtype=np.float32)
+    du_dt = np.zeros(N, dtype=np.float32)
+    
+    for i in prange(N):
+        # Load particle i data
+        pos_i = positions[i]
+        vel_i = velocities[i]
+        rho_i = densities[i]
+        P_i = pressures[i]
+        cs_i = sound_speeds[i]
+        h_i = smoothing_lengths[i]
+        
+        # Precompute pressure term
+        P_rho2_i = P_i / (rho_i * rho_i)
+        
+        start = neighbour_offsets[i]
+        end = neighbour_offsets[i+1]
+        
+        ax = 0.0
+        ay = 0.0
+        az = 0.0
+        du = 0.0
+        
+        for k in range(start, end):
+            j = neighbour_indices[k]
+            
+            # Load particle j data
+            pos_j = positions[j]
+            vel_j = velocities[j]
+            m_j = masses[j]
+            rho_j = densities[j]
+            P_j = pressures[j]
+            cs_j = sound_speeds[j]
+            h_j = smoothing_lengths[j]
+            
+            # Relative vectors
+            dx = pos_i[0] - pos_j[0]
+            dy = pos_i[1] - pos_j[1]
+            dz = pos_i[2] - pos_j[2]
+            
+            dvx = vel_i[0] - vel_j[0]
+            dvy = vel_i[1] - vel_j[1]
+            dvz = vel_i[2] - vel_j[2]
+            
+            r2 = dx*dx + dy*dy + dz*dz
+            r = np.sqrt(r2)
+            
+            # Kernel gradient
+            # Use h_i for consistency with Python version (though symmetrizing h is better)
+            # Inline gradient computation to avoid function call overhead
+            # _kernel_gradient_cubic_spline_numba(r_vec, h)
+            
+            # Inline kernel gradient logic
+            if r > 0:
+                q = r / h_i
+                sigma = 1.0 / np.pi # 3D
+                dw = 0.0
+                if q < 1.0:
+                    dw = -3.0 * q + 2.25 * q * q
+                elif q < 2.0:
+                    dw = -0.75 * (2.0 - q) * (2.0 - q)
+                
+                grad_factor = (sigma / (h_i**4)) * dw / r
+                grad_Wx = grad_factor * dx
+                grad_Wy = grad_factor * dy
+                grad_Wz = grad_factor * dz
+            else:
+                grad_Wx = 0.0
+                grad_Wy = 0.0
+                grad_Wz = 0.0
+
+            # Pressure term
+            P_rho2_j = P_j / (rho_j * rho_j)
+            pressure_term = P_rho2_i + P_rho2_j
+            
+            # Viscosity
+            v_dot_r = dvx*dx + dvy*dy + dvz*dz
+            visc_term = 0.0
+            
+            if v_dot_r < 0:
+                h_ij = 0.5 * (h_i + h_j)
+                mu_ij = (h_ij * v_dot_r) / (r2 + eta*eta * h_ij*h_ij)
+                
+                c_ij = 0.5 * (cs_i + cs_j)
+                rho_ij = 0.5 * (rho_i + rho_j)
+                
+                visc_term = (-alpha * c_ij * mu_ij + beta * mu_ij * mu_ij) / rho_ij
+                
+            # Total force factor
+            # F_ij = - m_j * (pressure + viscosity) * grad_W
+            force_factor = -m_j * (pressure_term + visc_term)
+            
+            ax += force_factor * grad_Wx
+            ay += force_factor * grad_Wy
+            az += force_factor * grad_Wz
+            
+            # Energy
+            # du/dt = 0.5 * m_j * (pressure + viscosity) * v_ij . grad_W
+            v_dot_gradW = dvx*grad_Wx + dvy*grad_Wy + dvz*grad_Wz
+            du += 0.5 * m_j * (pressure_term + visc_term) * v_dot_gradW
+            
+        accel[i, 0] = ax
+        accel[i, 1] = ay
+        accel[i, 2] = az
+        du_dt[i] = du
+        
+    return accel, du_dt
+
+
 def compute_hydro_acceleration(
     positions: NDArrayFloat,
     velocities: NDArrayFloat,
@@ -38,72 +205,41 @@ def compute_hydro_acceleration(
 
     Implements the standard SPH momentum and energy equations with
     artificial viscosity (Monaghan 1997, Price 2012).
-
-    Momentum equation:
-        dv_i/dt = -∑_j m_j (P_i/ρ_i² + P_j/ρ_j²) ∇W_ij + Π_ij ∇W_ij
-
-    Energy equation:
-        du_i/dt = (1/2) ∑_j m_j (P_i/ρ_i² + P_j/ρ_j²) v_ij · ∇W_ij
-
-    where Π_ij is the artificial viscosity term.
-
-    Parameters
-    ----------
-    positions : NDArrayFloat, shape (N, 3)
-        Particle positions.
-    velocities : NDArrayFloat, shape (N, 3)
-        Particle velocities.
-    masses : NDArrayFloat, shape (N,)
-        Particle masses.
-    densities : NDArrayFloat, shape (N,)
-        Particle densities ρ.
-    pressures : NDArrayFloat, shape (N,)
-        Particle pressures P.
-    sound_speeds : NDArrayFloat, shape (N,)
-        Particle sound speeds c_s.
-    smoothing_lengths : NDArrayFloat, shape (N,)
-        Smoothing lengths h.
-    neighbour_lists : List[NDArray[int32]]
-        Neighbour indices for each particle.
-    kernel_gradient_func : callable
-        Kernel gradient function ∇W(r_vec, h).
-    alpha : float, optional
-        Artificial viscosity linear coefficient (default 1.0).
-    beta : float, optional
-        Artificial viscosity quadratic coefficient (default 2.0).
-    eta : float, optional
-        Small constant to prevent singularities (default 0.1).
-
-    Returns
-    -------
-    accel : NDArrayFloat, shape (N, 3)
-        Hydrodynamic acceleration dv/dt.
-    du_dt : NDArrayFloat, shape (N,)
-        Rate of change of internal energy du/dt.
-
-    Notes
-    -----
-    Artificial viscosity (Monaghan 1997):
-        Π_ij = { -α c̄_ij μ_ij/ρ̄_ij + β μ_ij²/ρ̄_ij,  v_ij · r_ij < 0
-               { 0,                                     v_ij · r_ij ≥ 0
-
-    where:
-        μ_ij = (h_ij v_ij · r_ij) / (r_ij² + η² h_ij²)
-        c̄_ij = (c_i + c_j) / 2
-        ρ̄_ij = (ρ_i + ρ_j) / 2
-        h_ij = (h_i + h_j) / 2
-
-    References
-    ----------
-    .. [1] Monaghan, J. J. (1997), "SPH and Riemann Solvers",
-           Journal of Computational Physics, 136, 298.
-    .. [2] Monaghan, J. J. (2005), "Smoothed particle hydrodynamics",
-           Reports on Progress in Physics, 68, 1703.
-    .. [3] Price, D. J. (2012), "Smoothed particle hydrodynamics and
-           magnetohydrodynamics", Journal of Computational Physics, 231, 759.
-    .. [4] Cullen, L., & Dehnen, W. (2010), "Inviscid smoothed particle
-           hydrodynamics", MNRAS, 408, 669.
     """
+    # Try Numba implementation first
+    if HAS_NUMBA:
+        # Convert neighbour lists to flat arrays
+        # This overhead is small compared to the O(N*N_neigh) computation
+        counts = np.array([len(l) for l in neighbour_lists], dtype=np.int32)
+        offsets = np.zeros(len(counts) + 1, dtype=np.int32)
+        offsets[1:] = np.cumsum(counts)
+        
+        # Concatenate is fast
+        if len(neighbour_lists) > 0:
+             # Check if list is not empty of empty arrays
+             total_neighbours = offsets[-1]
+             if total_neighbours > 0:
+                 indices = np.concatenate(neighbour_lists).astype(np.int32)
+                 
+                 return _compute_hydro_numba(
+                     positions.astype(np.float32),
+                     velocities.astype(np.float32),
+                     masses.astype(np.float32),
+                     densities.astype(np.float32),
+                     pressures.astype(np.float32),
+                     sound_speeds.astype(np.float32),
+                     smoothing_lengths.astype(np.float32),
+                     indices,
+                     offsets,
+                     alpha,
+                     beta,
+                     eta
+                 )
+             else:
+                 # No neighbours, return zeros
+                 return np.zeros((n_particles, 3), dtype=np.float32), np.zeros(n_particles, dtype=np.float32)
+    
+    # Fallback to original implementation
     n_particles = positions.shape[0]
     accel = np.zeros((n_particles, 3), dtype=np.float32)
     du_dt = np.zeros(n_particles, dtype=np.float32)

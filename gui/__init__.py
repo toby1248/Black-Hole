@@ -11,7 +11,7 @@ Components:
 - DataDisplayWidget: Live data visualization (energy plots, statistics)
 
 Usage:
-    from tde_sph.gui import launch_gui, TDESPHMainWindow
+    from gui import launch_gui, TDESPHMainWindow
 
     # Launch the GUI application
     launch_gui()
@@ -48,10 +48,10 @@ except ImportError:
         HAS_PYQT = False
 
 if HAS_PYQT:
-    from tde_sph.gui.main_window import TDESPHMainWindow, main as launch_gui
-    from tde_sph.gui.config_editor import ConfigEditorWidget, YAMLSyntaxHighlighter
-    from tde_sph.gui.control_panel import ControlPanelWidget
-    from tde_sph.gui.data_display import DataDisplayWidget, EnergyPlotWidget, StatisticsWidget
+    from .main_window import TDESPHMainWindow, main as launch_gui
+    from .config_editor import ConfigEditorWidget, YAMLSyntaxHighlighter
+    from .control_panel import ControlPanelWidget
+    from .data_display import DataDisplayWidget, EnergyPlotWidget, StatisticsWidget
 else:
     # Provide placeholders if PyQt not available
     TDESPHMainWindow = None

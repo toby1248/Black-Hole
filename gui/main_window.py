@@ -15,12 +15,20 @@ Date: 2025-11-18
 
 from typing import Optional
 from pathlib import Path
+import sys
+
+# Ensure src is in sys.path
+current_dir = Path(__file__).resolve().parent
+root_dir = current_dir.parent
+src_dir = root_dir / "src"
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
 try:
     from PyQt6.QtWidgets import (
         QMainWindow, QApplication, QDockWidget, QMenuBar, QMenu,
         QStatusBar, QToolBar, QFileDialog, QMessageBox, QWidget,
-        QVBoxLayout, QLabel
+        QVBoxLayout, QLabel, QTabWidget
     )
     from PyQt6.QtCore import Qt, QSettings, QTimer, pyqtSignal
     from PyQt6.QtGui import QAction, QIcon, QKeySequence
@@ -44,16 +52,37 @@ except ImportError:
             "  pip install PyQt5   # Alternative"
         )
 
-# Import GUI components (will create these next)
+# Import GUI components
 try:
-    from tde_sph.gui.config_editor import ConfigEditorWidget
-    from tde_sph.gui.control_panel import ControlPanelWidget
-    from tde_sph.gui.data_display import DataDisplayWidget
+    # Try relative import (when running as package)
+    from .config_editor import ConfigEditorWidget
+    from .control_panel import ControlPanelWidget
+    from .data_display import DataDisplayWidget
+    from .simulation_thread import SimulationThread
+    from .web_viewer import WebViewerWidget
 except ImportError:
-    # Fallback for testing main_window.py in isolation
-    ConfigEditorWidget = None
-    ControlPanelWidget = None
-    DataDisplayWidget = None
+    try:
+        # Try absolute import (when running as script from gui folder)
+        from config_editor import ConfigEditorWidget
+        from control_panel import ControlPanelWidget
+        from data_display import DataDisplayWidget
+        from simulation_thread import SimulationThread
+        from web_viewer import WebViewerWidget
+    except ImportError:
+        try:
+            # Try import from gui package (when running from root)
+            from gui.config_editor import ConfigEditorWidget
+            from gui.control_panel import ControlPanelWidget
+            from gui.data_display import DataDisplayWidget
+            from gui.simulation_thread import SimulationThread
+            from gui.web_viewer import WebViewerWidget
+        except ImportError:
+            # Fallback
+            ConfigEditorWidget = None
+            ControlPanelWidget = None
+            DataDisplayWidget = None
+            SimulationThread = None
+            WebViewerWidget = None
 
 
 class TDESPHMainWindow(QMainWindow):
@@ -100,6 +129,7 @@ class TDESPHMainWindow(QMainWindow):
         # Current state
         self.current_config_file: Optional[Path] = None
         self.simulation_running = False
+        self.sim_thread: Optional[SimulationThread] = None
 
         # Build UI components
         self._create_widgets()
@@ -115,18 +145,30 @@ class TDESPHMainWindow(QMainWindow):
 
     def _create_widgets(self):
         """Create central widget and dock widgets."""
-        # Central widget: Configuration editor
+        # Central widget: Tab widget with Config Editor and 3D Viewer
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+
+        # Tab 1: Configuration Editor
         if ConfigEditorWidget is not None:
             self.config_editor = ConfigEditorWidget(self)
-            self.setCentralWidget(self.config_editor)
+            self.tabs.addTab(self.config_editor, "Configuration")
         else:
             # Fallback if config_editor.py not created yet
             placeholder = QWidget()
             layout = QVBoxLayout()
             layout.addWidget(QLabel("Configuration Editor (placeholder)"))
             placeholder.setLayout(layout)
-            self.setCentralWidget(placeholder)
+            self.setCentralWidget(placeholder) # Fallback to simple widget if tabs fail? No, just add to tab.
             self.config_editor = None
+            self.tabs.addTab(placeholder, "Configuration")
+
+        # Tab 2: 3D Viewer
+        if WebViewerWidget is not None:
+            self.web_viewer = WebViewerWidget(self)
+            self.tabs.addTab(self.web_viewer, "3D Visualization")
+        else:
+            self.web_viewer = None
 
         # Dock widgets
         if ControlPanelWidget is not None:
@@ -304,6 +346,8 @@ class TDESPHMainWindow(QMainWindow):
         if self.control_panel is not None:
             self.control_panel.start_requested.connect(self.start_simulation)
             self.control_panel.stop_requested.connect(self.stop_simulation)
+            self.control_panel.pause_requested.connect(self.pause_simulation)
+            self.control_panel.resume_requested.connect(self.resume_simulation)
 
         if self.config_editor is not None:
             self.config_editor.config_modified.connect(self._on_config_modified)
@@ -582,16 +626,27 @@ physics:
         elif self.config_editor is not None and self.config_editor.is_modified():
             self.save_config()
 
-        # Start simulation
-        self.simulation_running = True
-        self.simulation_started.emit()
+        # Start simulation thread
+        if SimulationThread is not None:
+            self.sim_thread = SimulationThread(config)
+            self.sim_thread.progress_updated.connect(self._on_progress_updated)
+            self.sim_thread.simulation_finished.connect(self._on_simulation_finished)
+            self.sim_thread.simulation_stopped.connect(self._on_simulation_stopped)
+            self.sim_thread.simulation_error.connect(self._on_simulation_error)
+            self.sim_thread.log_message.connect(self._on_log_message)
+            
+            self.sim_thread.start()
+            
+            self.simulation_running = True
+            self.simulation_started.emit()
 
-        if self.control_panel is not None:
-            self.control_panel.on_simulation_started()
+            if self.control_panel is not None:
+                self.control_panel.on_simulation_started()
+                self.control_panel.update_parameters(config)
 
-        self.statusBar().showMessage("Simulation started", 3000)
-
-        # TODO: Actually launch simulation in background thread
+            self.statusBar().showMessage("Simulation started", 3000)
+        else:
+            QMessageBox.critical(self, "Error", "SimulationThread not available (check imports)")
 
     def stop_simulation(self):
         """Stop the running simulation."""
@@ -606,13 +661,61 @@ physics:
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.simulation_running = False
-            self.simulation_stopped.emit()
+            if self.sim_thread and self.sim_thread.isRunning():
+                self.sim_thread.stop()
+                self.sim_thread.wait()
+            
+            # UI update handled by signal connection to _on_simulation_stopped
+            self.statusBar().showMessage("Stopping simulation...", 3000)
 
-            if self.control_panel is not None:
-                self.control_panel.on_simulation_stopped()
+    def pause_simulation(self):
+        """Pause the running simulation."""
+        if self.sim_thread:
+            self.sim_thread.pause()
+            self.statusBar().showMessage("Simulation paused", 3000)
 
-            self.statusBar().showMessage("Simulation stopped", 3000)
+    def resume_simulation(self):
+        """Resume the paused simulation."""
+        if self.sim_thread:
+            self.sim_thread.resume()
+            self.statusBar().showMessage("Simulation resumed", 3000)
+
+    def _on_progress_updated(self, time, step, energies, stats):
+        """Handle progress updates from simulation thread."""
+        if self.control_panel:
+            self.control_panel.set_progress(time, step)
+            
+        if self.data_display:
+            self.data_display.update_live_data(time, energies, stats)
+
+    def _on_simulation_finished(self):
+        """Handle simulation completion."""
+        self.simulation_running = False
+        if self.control_panel:
+            self.control_panel.on_simulation_finished()
+        self.statusBar().showMessage("Simulation finished", 5000)
+
+    def _on_simulation_stopped(self):
+        """Handle simulation stopped by user."""
+        self.simulation_running = False
+        self.simulation_stopped.emit()
+        if self.control_panel:
+            self.control_panel.on_simulation_stopped()
+        self.statusBar().showMessage("Simulation stopped", 3000)
+
+    def _on_simulation_error(self, error_msg):
+        """Handle simulation error."""
+        self.simulation_running = False
+        if self.control_panel:
+            self.control_panel.on_simulation_stopped()
+            self.control_panel.log(f"ERROR: {error_msg}")
+        
+        QMessageBox.critical(self, "Simulation Error", f"An error occurred:\n{error_msg}")
+
+    def _on_log_message(self, msg):
+        """Handle log message from thread."""
+        if self.control_panel:
+            self.control_panel.log(msg)
 
     # -------------------------------------------------------------------------
     # Other menu actions

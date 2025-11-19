@@ -14,7 +14,108 @@ Reference:
 
 from typing import Optional
 import numpy as np
+try:
+    from numba import njit, prange
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+    # Fallback for type hinting or if numba is missing (though performance will suffer)
+    prange = range
+    def njit(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 from ..core.interfaces import GravitySolver, Metric, NDArrayFloat
+
+
+@njit(parallel=True, fastmath=True)
+def _compute_accel_numba(positions, masses, smoothing_lengths, G):
+    """JIT-compiled N-body acceleration."""
+    N = len(positions)
+    accel = np.zeros((N, 3), dtype=np.float32)
+    
+    for i in prange(N):
+        # Pre-load particle i data
+        pos_i_x = positions[i, 0]
+        pos_i_y = positions[i, 1]
+        pos_i_z = positions[i, 2]
+        h_i = smoothing_lengths[i]
+        
+        ax = 0.0
+        ay = 0.0
+        az = 0.0
+        
+        for j in range(N):
+            if i == j:
+                continue
+            
+            # Vector r_ij = r_i - r_j
+            dx = pos_i_x - positions[j, 0]
+            dy = pos_i_y - positions[j, 1]
+            dz = pos_i_z - positions[j, 2]
+            
+            r2 = dx*dx + dy*dy + dz*dz
+            
+            # Softening: epsilon^2 = ((h_i + h_j)/2)^2
+            h_j = smoothing_lengths[j]
+            epsilon = (h_i + h_j) * 0.5
+            epsilon2 = epsilon * epsilon
+            
+            r2_soft = r2 + epsilon2
+            inv_r3 = r2_soft**(-1.5)
+            
+            # Force: -G * m_j * (r_i - r_j) / r_soft^3
+            # We want to add to acceleration of i
+            factor = -G * masses[j] * inv_r3
+            
+            ax += factor * dx
+            ay += factor * dy
+            az += factor * dz
+            
+        accel[i, 0] = ax
+        accel[i, 1] = ay
+        accel[i, 2] = az
+        
+    return accel
+
+
+@njit(parallel=True, fastmath=True)
+def _compute_potential_numba(positions, masses, smoothing_lengths, G):
+    """JIT-compiled N-body potential."""
+    N = len(positions)
+    potential = np.zeros(N, dtype=np.float32)
+    
+    for i in prange(N):
+        pos_i_x = positions[i, 0]
+        pos_i_y = positions[i, 1]
+        pos_i_z = positions[i, 2]
+        h_i = smoothing_lengths[i]
+        
+        phi = 0.0
+        
+        for j in range(N):
+            if i == j:
+                continue
+                
+            dx = pos_i_x - positions[j, 0]
+            dy = pos_i_y - positions[j, 1]
+            dz = pos_i_z - positions[j, 2]
+            
+            r2 = dx*dx + dy*dy + dz*dz
+            
+            h_j = smoothing_lengths[j]
+            epsilon = (h_i + h_j) * 0.5
+            epsilon2 = epsilon * epsilon
+            
+            r_soft = np.sqrt(r2 + epsilon2)
+            
+            # Potential: -G * m_j / r_soft
+            phi += -G * masses[j] / r_soft
+            
+        potential[i] = phi
+        
+    return potential
 
 
 class NewtonianGravity(GravitySolver):
@@ -70,7 +171,7 @@ class NewtonianGravity(GravitySolver):
         Compute Newtonian gravitational acceleration on all particles.
 
         Uses direct O(N²) pairwise summation with softening equal to
-        the smoothing length.
+        the smoothing length. Optimized with Numba if available.
 
         Parameters
         ----------
@@ -81,28 +182,25 @@ class NewtonianGravity(GravitySolver):
         smoothing_lengths : NDArrayFloat, shape (N,)
             SPH smoothing lengths (used for softening ε).
         metric : Optional[Metric], optional
-            Spacetime metric (not used in Newtonian solver, included
-            for interface compatibility).
+            Spacetime metric (not used in Newtonian solver).
 
         Returns
         -------
         accel : NDArrayFloat, shape (N, 3)
             Gravitational acceleration on each particle [ax, ay, az].
-
-        Notes
-        -----
-        Complexity is O(N²). For N > 10⁵ particles, consider implementing
-        a tree-based solver.
-
-        Edge cases:
-        - Self-interaction (i=j) is excluded from summation.
-        - Softening prevents division by zero at r_ij → 0.
         """
-        N = len(positions)
         positions = positions.astype(np.float32)
         masses = masses.astype(np.float32)
         smoothing_lengths = smoothing_lengths.astype(np.float32)
 
+        if HAS_NUMBA:
+            return _compute_accel_numba(positions, masses, smoothing_lengths, self.G)
+        
+        # Fallback to vectorized NumPy implementation
+        N = len(positions)
+        # ... (rest of original numpy implementation if needed, but we'll just use the Numba one or the old one)
+        # For brevity in this edit, I'll keep the old implementation as fallback logic
+        
         # Initialize acceleration array
         accel = np.zeros((N, 3), dtype=np.float32)
 
@@ -149,34 +247,17 @@ class NewtonianGravity(GravitySolver):
         """
         Compute Newtonian gravitational potential at each particle.
 
-        Uses softened potential with ε = smoothing_length.
-
-        Parameters
-        ----------
-        positions : NDArrayFloat, shape (N, 3)
-            Particle positions.
-        masses : NDArrayFloat, shape (N,)
-            Particle masses.
-        smoothing_lengths : NDArrayFloat, shape (N,)
-            Smoothing lengths for softening.
-
-        Returns
-        -------
-        potential : NDArrayFloat, shape (N,)
-            Gravitational potential φ at each particle.
-            Total potential energy = ½ ∑_i m_i φ_i.
-
-        Notes
-        -----
-        Softened potential:
-            φ_i = -G ∑_j m_j / sqrt(r_ij² + ε²)
-
-        The factor of ½ in total energy accounts for double-counting.
+        Uses softened potential with ε = smoothing_length. Optimized with Numba.
         """
-        N = len(positions)
         positions = positions.astype(np.float32)
         masses = masses.astype(np.float32)
         smoothing_lengths = smoothing_lengths.astype(np.float32)
+
+        if HAS_NUMBA:
+            return _compute_potential_numba(positions, masses, smoothing_lengths, self.G)
+
+        # Fallback
+        N = len(positions)
 
         # Compute pairwise distances
         # r_ij = positions[j] - positions[i]

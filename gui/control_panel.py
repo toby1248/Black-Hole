@@ -58,6 +58,7 @@ class ControlPanelWidget(QWidget):
     start_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     pause_requested = pyqtSignal()
+    resume_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +70,7 @@ class ControlPanelWidget(QWidget):
         self.current_step = 0
         self.total_time = 100.0
         self.total_steps = 10000
+        self.is_simulated = False
 
         # Update timer (for simulated progress)
         self.update_timer = QTimer()
@@ -238,10 +240,12 @@ class ControlPanelWidget(QWidget):
         if self.is_paused:
             # Resume
             self.is_paused = False
-            self.update_timer.start(100)
+            if self.is_simulated:
+                self.update_timer.start(100)
             self.status_label.setText("Status: Running")
             self.pause_button.setText("Pause")
             self.log("Simulation resumed")
+            self.resume_requested.emit()
         else:
             # Pause
             self.is_paused = True
@@ -259,10 +263,11 @@ class ControlPanelWidget(QWidget):
     # Public methods (called by main window)
     # -------------------------------------------------------------------------
 
-    def on_simulation_started(self):
+    def on_simulation_started(self, simulated=False):
         """Called when simulation starts."""
         self.is_running = True
         self.is_paused = False
+        self.is_simulated = simulated
         self.current_time = 0.0
         self.current_step = 0
 
@@ -275,7 +280,8 @@ class ControlPanelWidget(QWidget):
         self.progress_bar.setValue(0)
 
         # Start update timer (simulated progress)
-        self.update_timer.start(100)  # Update every 100ms
+        if self.is_simulated:
+            self.update_timer.start(100)  # Update every 100ms
 
         self.log("Simulation started")
 

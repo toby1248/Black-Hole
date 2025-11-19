@@ -26,7 +26,7 @@ The TDE-SPH GUI is a comprehensive PyQt6/PyQt5-based graphical interface for con
 ### Component Structure
 
 ```
-src/tde_sph/gui/
+gui/
 ├── __init__.py              # Module exports and PyQt detection
 ├── main_window.py           # Main application window (775 lines)
 ├── config_editor.py         # YAML editor with syntax highlighting (425 lines)
@@ -85,19 +85,19 @@ pip install tde-sph[gui]   # Installs PyQt6 + matplotlib + pyyaml
 
 **Method 1: Command line**
 ```bash
-python -m tde_sph.gui.main_window
+python -m gui.main_window
 ```
 
 **Method 2: Python script**
 ```python
-from tde_sph.gui import launch_gui
+from gui import launch_gui
 
 launch_gui()  # Opens GUI application
 ```
 
 **Method 3: Programmatic**
 ```python
-from tde_sph.gui import TDESPHMainWindow
+from gui import TDESPHMainWindow
 from PyQt6.QtWidgets import QApplication
 import sys
 
@@ -247,7 +247,7 @@ physics:
 
 **Example Usage**:
 ```python
-from tde_sph.gui import ConfigEditorWidget
+from gui import ConfigEditorWidget
 
 editor = ConfigEditorWidget()
 
@@ -326,7 +326,7 @@ class ControlPanelWidget(QWidget):
 
 **Example Usage**:
 ```python
-from tde_sph.gui import ControlPanelWidget
+from gui import ControlPanelWidget
 
 panel = ControlPanelWidget()
 
@@ -422,7 +422,7 @@ stats = {
 
 **Example Usage**:
 ```python
-from tde_sph.gui import DataDisplayWidget
+from gui import DataDisplayWidget
 
 display = DataDisplayWidget()
 
@@ -447,7 +447,7 @@ display.start_demo_mode()  # Auto-updates with simulated data
 #!/usr/bin/env python3
 """Launch TDE-SPH GUI and load a specific config file."""
 
-from tde_sph.gui import TDESPHMainWindow
+from gui import TDESPHMainWindow
 from PyQt6.QtWidgets import QApplication
 from pathlib import Path
 import sys
@@ -475,7 +475,7 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """Connect GUI to actual TDE-SPH simulation."""
 
-from tde_sph.gui import TDESPHMainWindow
+from gui import TDESPHMainWindow
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QThread, pyqtSignal
 import sys
@@ -609,7 +609,7 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """Use only the config editor widget (no full GUI)."""
 
-from tde_sph.gui import ConfigEditorWidget
+from gui import ConfigEditorWidget
 from PyQt6.QtWidgets import QApplication, QMainWindow
 import sys
 
@@ -726,7 +726,7 @@ class MyMainWindow(TDESPHMainWindow):
 ### Extend Data Display with Custom Plots
 
 ```python
-from tde_sph.gui import DataDisplayWidget
+from gui import DataDisplayWidget
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
