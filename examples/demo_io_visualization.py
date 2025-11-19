@@ -18,7 +18,7 @@ from pathlib import Path
 from tde_sph.io import HDF5Writer, write_snapshot, read_snapshot
 from tde_sph.visualization import Plotly3DVisualizer, quick_plot
 
-
+ 
 def create_expanding_sphere(n_particles, time, expansion_rate=0.5):
     """
     Create a simple expanding sphere of particles.
