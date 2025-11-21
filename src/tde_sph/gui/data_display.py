@@ -22,18 +22,30 @@ try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
         QLabel, QTableWidget, QTableWidgetItem, QTabWidget,
-        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView
+        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView,
+        QCheckBox
     )
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import Qt, QTimer, pyqtSignal
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
         QLabel, QTableWidget, QTableWidgetItem, QTabWidget,
-        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView
+        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView,
+        QCheckBox
     )
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import Qt, QTimer, pyqtSignal
     PYQT_VERSION = 5
+
+# Import unit conversion (TASK3)
+try:
+    from tde_sph.gui.unit_conversion import (
+        ConversionFactors, code_to_physical, get_unit_label, format_value_with_units
+    )
+    HAS_UNIT_CONVERSION = True
+except ImportError:
+    HAS_UNIT_CONVERSION = False
+    ConversionFactors = None
 
 # Matplotlib integration
 import matplotlib
@@ -281,13 +293,14 @@ class ParticleStatsTable(QWidget):
         layout.addWidget(self.table)
         self.setLayout(layout)
 
-    def update_stats(self, stats: Dict[str, Dict[str, float]]):
+    def update_stats(self, stats: Dict[str, Dict[str, float]], show_units: bool = False):
         """
         Update particle statistics.
 
         Parameters:
             stats: Dict with quantity names as keys, each containing
-                   {'min': ..., 'max': ..., 'mean': ..., 'std': ...}
+                   {'min': ..., 'max': ..., 'mean': ..., 'std': ..., 'unit': ...}
+            show_units: Whether to display unit labels (TASK3)
         """
         quantity_mapping = {
             'density': 0,
@@ -304,10 +317,13 @@ class ParticleStatsTable(QWidget):
             if key in quantity_mapping:
                 row = quantity_mapping[key]
                 if isinstance(values, dict):
-                    self.table.setItem(row, 1, QTableWidgetItem(f"{values.get('min', 0):.4e}"))
-                    self.table.setItem(row, 2, QTableWidgetItem(f"{values.get('max', 0):.4e}"))
-                    self.table.setItem(row, 3, QTableWidgetItem(f"{values.get('mean', 0):.4e}"))
-                    self.table.setItem(row, 4, QTableWidgetItem(f"{values.get('std', 0):.4e}"))
+                    unit = values.get('unit', '') if show_units else ''
+                    unit_suffix = f" {unit}" if unit else ""
+
+                    self.table.setItem(row, 1, QTableWidgetItem(f"{values.get('min', 0):.4e}{unit_suffix}"))
+                    self.table.setItem(row, 2, QTableWidgetItem(f"{values.get('max', 0):.4e}{unit_suffix}"))
+                    self.table.setItem(row, 3, QTableWidgetItem(f"{values.get('mean', 0):.4e}{unit_suffix}"))
+                    self.table.setItem(row, 4, QTableWidgetItem(f"{values.get('std', 0):.4e}{unit_suffix}"))
 
 
 class PerformanceMetricsWidget(QWidget):
@@ -433,13 +449,18 @@ class CoordinateMetricWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-    def update_data(self, data: Dict[str, float]):
+    def update_data(self, data: Dict[str, float], show_units: bool = True):
         """
         Update coordinate/metric data.
 
         Parameters:
             data: Dict with GR-specific data like 'metric_type', 'bh_mass', etc.
+            show_units: Whether to display unit labels (TASK3)
         """
+        # Unit labels (TASK3)
+        mass_unit = " M\u2609" if show_units else ""  # Sun symbol
+        length_unit = " R\u2099" if show_units else ""  # Subscript g for R_g
+
         if 'metric_type' in data:
             self.metric_type_label.setText(str(data['metric_type']))
 
@@ -447,22 +468,22 @@ class CoordinateMetricWidget(QWidget):
             self.coord_system_label.setText(str(data['coordinate_system']))
 
         if 'bh_mass' in data:
-            self.bh_mass_label.setText(f"{data['bh_mass']:.4e} M☉")
+            self.bh_mass_label.setText(f"{data['bh_mass']:.4e}{mass_unit}")
 
         if 'bh_spin' in data:
             self.bh_spin_label.setText(f"{data['bh_spin']:.4f}")
 
         if 'r_min' in data:
-            self.r_min_label.setText(f"{data['r_min']:.4f} R_g")
+            self.r_min_label.setText(f"{data['r_min']:.4f}{length_unit}")
 
         if 'r_max' in data:
-            self.r_max_label.setText(f"{data['r_max']:.4f} R_g")
+            self.r_max_label.setText(f"{data['r_max']:.4f}{length_unit}")
 
         if 'r_mean' in data:
-            self.r_mean_label.setText(f"{data['r_mean']:.4f} R_g")
+            self.r_mean_label.setText(f"{data['r_mean']:.4f}{length_unit}")
 
         if 'isco_radius' in data:
-            self.isco_radius_label.setText(f"{data['isco_radius']:.4f} R_g")
+            self.isco_radius_label.setText(f"{data['isco_radius']:.4f}{length_unit}")
 
         if 'particles_within_isco' in data:
             self.particles_in_isco_label.setText(f"{int(data['particles_within_isco']):,}")
@@ -470,7 +491,7 @@ class CoordinateMetricWidget(QWidget):
 
 class DiagnosticsWidget(QWidget):
     """
-    Comprehensive diagnostics widget (TASK2).
+    Comprehensive diagnostics widget (TASK2, TASK3).
 
     Combines particle statistics, performance metrics, and coordinate data
     in a multi-panel layout optimized for ultrawide monitors.
@@ -480,10 +501,35 @@ class DiagnosticsWidget(QWidget):
     - Performance metrics: wall time, steps/sec, GPU status
     - Coordinate/metric data: GR-specific information (conditional)
     - Layout optimized for 2560px+ width displays
+    - Unit conversion toggle (TASK3): switch between code and physical units
     """
+
+    # Signal emitted when unit mode changes
+    units_changed = pyqtSignal(bool)  # True = physical units
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Unit conversion state (TASK3)
+        self.use_physical_units = False
+        self.conversion_factors: Optional['ConversionFactors'] = None
+        self._last_data: Optional[Dict] = None
+
+        # Main vertical layout
+        outer_layout = QVBoxLayout()
+
+        # Unit toggle bar at top (TASK3)
+        toggle_layout = QHBoxLayout()
+        self.unit_toggle = QCheckBox("Show Physical Units")
+        self.unit_toggle.setToolTip("Toggle between dimensionless code units and physical units (R\u2609, M\u2609, K, etc.)")
+        self.unit_toggle.toggled.connect(self._on_units_toggled)
+        toggle_layout.addWidget(self.unit_toggle)
+        toggle_layout.addStretch()
+
+        self.unit_status_label = QLabel("")
+        toggle_layout.addWidget(self.unit_status_label)
+
+        outer_layout.addLayout(toggle_layout)
 
         # Main layout with splitter for resizable panels
         main_layout = QHBoxLayout()
@@ -507,10 +553,35 @@ class DiagnosticsWidget(QWidget):
         splitter.setSizes([400, 300, 300])
 
         main_layout.addWidget(splitter)
-        self.setLayout(main_layout)
+        outer_layout.addLayout(main_layout)
+        self.setLayout(outer_layout)
 
         # Set minimum width hint for ultrawide optimization
         self.setMinimumWidth(1200)
+
+    def set_config(self, config: Dict):
+        """
+        Set simulation config for unit conversion (TASK3).
+
+        Parameters:
+            config: Simulation configuration dictionary
+        """
+        if HAS_UNIT_CONVERSION and ConversionFactors is not None:
+            self.conversion_factors = ConversionFactors(config)
+            self.unit_toggle.setEnabled(True)
+            self.unit_status_label.setText("Unit conversion available")
+        else:
+            self.unit_toggle.setEnabled(False)
+            self.unit_status_label.setText("Unit conversion not available")
+
+    def _on_units_toggled(self, checked: bool):
+        """Handle unit toggle state change (TASK3)."""
+        self.use_physical_units = checked
+        self.units_changed.emit(checked)
+
+        # Re-display last data with new units
+        if self._last_data is not None:
+            self._update_with_units(self._last_data)
 
     def update_diagnostics(self, data: Dict):
         """
@@ -522,17 +593,93 @@ class DiagnosticsWidget(QWidget):
                 - 'performance': dict of performance metrics
                 - 'coordinate_metric': dict of GR data
         """
+        # Store for re-display on unit toggle (TASK3)
+        self._last_data = data
+
+        self._update_with_units(data)
+
+    def _update_with_units(self, data: Dict):
+        """
+        Update panels with optional unit conversion (TASK3).
+
+        Parameters:
+            data: Raw diagnostic data in code units
+        """
+        # Apply unit conversion if enabled
+        if self.use_physical_units and self.conversion_factors is not None and HAS_UNIT_CONVERSION:
+            converted_data = self._convert_to_physical(data)
+        else:
+            converted_data = data
+
         # Update particle statistics
-        if 'particle_stats' in data:
-            self.particle_stats.update_stats(data['particle_stats'])
+        if 'particle_stats' in converted_data:
+            self.particle_stats.update_stats(
+                converted_data['particle_stats'],
+                show_units=self.use_physical_units
+            )
 
         # Update performance metrics
-        if 'performance' in data:
-            self.performance_metrics.update_metrics(data['performance'])
+        if 'performance' in converted_data:
+            self.performance_metrics.update_metrics(converted_data['performance'])
 
         # Update coordinate/metric data
+        if 'coordinate_metric' in converted_data:
+            self.coordinate_metric.update_data(
+                converted_data['coordinate_metric'],
+                show_units=self.use_physical_units
+            )
+
+    def _convert_to_physical(self, data: Dict) -> Dict:
+        """
+        Convert code units to physical units (TASK3).
+
+        Parameters:
+            data: Data in code units
+
+        Returns:
+            Data in physical units
+        """
+        if self.conversion_factors is None:
+            return data
+
+        converted = {}
+
+        # Convert particle stats
+        if 'particle_stats' in data:
+            converted['particle_stats'] = {}
+            unit_type_map = {
+                'density': 'density',
+                'pressure': 'pressure',
+                'temperature': 'temperature',
+                'sound_speed': 'velocity',
+                'velocity_magnitude': 'velocity',
+                'smoothing_length': 'length_rg',
+                'internal_energy': 'energy',
+                'entropy': 'energy',  # Simplified
+            }
+
+            for qty, stats in data['particle_stats'].items():
+                unit_type = unit_type_map.get(qty, None)
+                if unit_type and isinstance(stats, dict):
+                    converted['particle_stats'][qty] = {
+                        'min': code_to_physical(stats['min'], unit_type, self.conversion_factors),
+                        'max': code_to_physical(stats['max'], unit_type, self.conversion_factors),
+                        'mean': code_to_physical(stats['mean'], unit_type, self.conversion_factors),
+                        'std': code_to_physical(stats['std'], unit_type, self.conversion_factors),
+                        'unit': get_unit_label(unit_type, True),
+                    }
+                else:
+                    converted['particle_stats'][qty] = stats
+
+        # Copy performance (no conversion needed)
+        if 'performance' in data:
+            converted['performance'] = data['performance']
+
+        # Copy coordinate metric (already in physical-ish units)
         if 'coordinate_metric' in data:
-            self.coordinate_metric.update_data(data['coordinate_metric'])
+            converted['coordinate_metric'] = data['coordinate_metric']
+
+        return converted
 
     def set_demo_data(self):
         """Set demo data for testing the widget."""
