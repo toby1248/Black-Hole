@@ -21,14 +21,16 @@ import numpy as np
 try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
-        QLabel, QTableWidget, QTableWidgetItem, QTabWidget
+        QLabel, QTableWidget, QTableWidgetItem, QTabWidget,
+        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView
     )
     from PyQt6.QtCore import Qt, QTimer
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
-        QLabel, QTableWidget, QTableWidgetItem, QTabWidget
+        QLabel, QTableWidget, QTableWidgetItem, QTabWidget,
+        QFormLayout, QGridLayout, QSplitter, QFrame, QHeaderView
     )
     from PyQt5.QtCore import Qt, QTimer
     PYQT_VERSION = 5
@@ -231,6 +233,343 @@ class StatisticsWidget(QWidget):
             return f"{value:.4f}"
 
 
+class ParticleStatsTable(QWidget):
+    """
+    Comprehensive particle statistics table (TASK2).
+
+    Displays min/max/mean/stddev for all particle quantities
+    in a multi-column table optimized for ultrawide displays.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("Particle Statistics")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title)
+
+        # Create table with 5 columns: Quantity | Min | Max | Mean | Std Dev
+        self.table = QTableWidget(8, 5)
+        self.table.setHorizontalHeaderLabels(['Quantity', 'Min', 'Max', 'Mean', 'Std Dev'])
+
+        # Configure header
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        for i in range(5):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+
+        # Initialize rows
+        quantities = [
+            'Density (ρ)',
+            'Pressure (P)',
+            'Temperature (T)',
+            'Sound Speed (cs)',
+            'Velocity Magnitude (|v|)',
+            'Smoothing Length (h)',
+            'Internal Energy (u)',
+            'Specific Entropy (s)'
+        ]
+
+        for i, qty in enumerate(quantities):
+            self.table.setItem(i, 0, QTableWidgetItem(qty))
+            for j in range(1, 5):
+                self.table.setItem(i, j, QTableWidgetItem('N/A'))
+
+        layout.addWidget(self.table)
+        self.setLayout(layout)
+
+    def update_stats(self, stats: Dict[str, Dict[str, float]]):
+        """
+        Update particle statistics.
+
+        Parameters:
+            stats: Dict with quantity names as keys, each containing
+                   {'min': ..., 'max': ..., 'mean': ..., 'std': ...}
+        """
+        quantity_mapping = {
+            'density': 0,
+            'pressure': 1,
+            'temperature': 2,
+            'sound_speed': 3,
+            'velocity_magnitude': 4,
+            'smoothing_length': 5,
+            'internal_energy': 6,
+            'entropy': 7
+        }
+
+        for key, values in stats.items():
+            if key in quantity_mapping:
+                row = quantity_mapping[key]
+                if isinstance(values, dict):
+                    self.table.setItem(row, 1, QTableWidgetItem(f"{values.get('min', 0):.4e}"))
+                    self.table.setItem(row, 2, QTableWidgetItem(f"{values.get('max', 0):.4e}"))
+                    self.table.setItem(row, 3, QTableWidgetItem(f"{values.get('mean', 0):.4e}"))
+                    self.table.setItem(row, 4, QTableWidgetItem(f"{values.get('std', 0):.4e}"))
+
+
+class PerformanceMetricsWidget(QWidget):
+    """
+    Performance metrics display (TASK2).
+
+    Shows wall-clock time, steps/sec, GPU status, memory usage.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("Performance Metrics")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title)
+
+        # Use form layout for key-value pairs
+        form = QFormLayout()
+
+        # Create labels for values (will be updated)
+        self.wall_time_label = QLabel("00:00:00")
+        self.sim_time_label = QLabel("0.000")
+        self.steps_per_sec_label = QLabel("N/A")
+        self.gpu_status_label = QLabel("Unknown")
+        self.memory_label = QLabel("N/A")
+        self.step_count_label = QLabel("0")
+        self.dt_label = QLabel("N/A")
+
+        form.addRow("Wall-clock Time:", self.wall_time_label)
+        form.addRow("Simulation Time:", self.sim_time_label)
+        form.addRow("Current Step:", self.step_count_label)
+        form.addRow("Timestep (dt):", self.dt_label)
+        form.addRow("Steps/second:", self.steps_per_sec_label)
+        form.addRow("GPU Status:", self.gpu_status_label)
+        form.addRow("Memory Usage:", self.memory_label)
+
+        layout.addLayout(form)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def update_metrics(self, metrics: Dict[str, float]):
+        """
+        Update performance metrics.
+
+        Parameters:
+            metrics: Dict with keys like 'wall_time', 'sim_time', 'steps_per_sec', etc.
+        """
+        if 'wall_time' in metrics:
+            # Format as HH:MM:SS
+            t = int(metrics['wall_time'])
+            hours, remainder = divmod(t, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            self.wall_time_label.setText(f"{hours:02d}:{minutes:02d}:{seconds:02d}")
+
+        if 'sim_time' in metrics:
+            self.sim_time_label.setText(f"{metrics['sim_time']:.6f}")
+
+        if 'step_count' in metrics:
+            self.step_count_label.setText(f"{int(metrics['step_count']):,}")
+
+        if 'dt' in metrics:
+            self.dt_label.setText(f"{metrics['dt']:.4e}")
+
+        if 'steps_per_sec' in metrics:
+            self.steps_per_sec_label.setText(f"{metrics['steps_per_sec']:.2f}")
+
+        if 'gpu_available' in metrics:
+            if metrics['gpu_available']:
+                self.gpu_status_label.setText("CUDA Available")
+                self.gpu_status_label.setStyleSheet("color: green;")
+            else:
+                self.gpu_status_label.setText("CPU Only")
+                self.gpu_status_label.setStyleSheet("color: orange;")
+
+        if 'memory_mb' in metrics:
+            self.memory_label.setText(f"{metrics['memory_mb']:.1f} MB")
+
+
+class CoordinateMetricWidget(QWidget):
+    """
+    Coordinate and metric data display for GR simulations (TASK2).
+
+    Shows black hole parameters, particle distances, ISCO statistics.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("Coordinate/Metric Data (GR Mode)")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(title)
+
+        # Use form layout
+        form = QFormLayout()
+
+        self.metric_type_label = QLabel("N/A")
+        self.coord_system_label = QLabel("N/A")
+        self.bh_mass_label = QLabel("N/A")
+        self.bh_spin_label = QLabel("N/A")
+        self.r_min_label = QLabel("N/A")
+        self.r_max_label = QLabel("N/A")
+        self.r_mean_label = QLabel("N/A")
+        self.isco_radius_label = QLabel("N/A")
+        self.particles_in_isco_label = QLabel("N/A")
+
+        form.addRow("Metric Type:", self.metric_type_label)
+        form.addRow("Coordinate System:", self.coord_system_label)
+        form.addRow("Black Hole Mass (M):", self.bh_mass_label)
+        form.addRow("Black Hole Spin (a):", self.bh_spin_label)
+        form.addRow("Min Distance (r_min):", self.r_min_label)
+        form.addRow("Max Distance (r_max):", self.r_max_label)
+        form.addRow("Mean Distance (r_mean):", self.r_mean_label)
+        form.addRow("ISCO Radius:", self.isco_radius_label)
+        form.addRow("Particles < ISCO:", self.particles_in_isco_label)
+
+        layout.addLayout(form)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def update_data(self, data: Dict[str, float]):
+        """
+        Update coordinate/metric data.
+
+        Parameters:
+            data: Dict with GR-specific data like 'metric_type', 'bh_mass', etc.
+        """
+        if 'metric_type' in data:
+            self.metric_type_label.setText(str(data['metric_type']))
+
+        if 'coordinate_system' in data:
+            self.coord_system_label.setText(str(data['coordinate_system']))
+
+        if 'bh_mass' in data:
+            self.bh_mass_label.setText(f"{data['bh_mass']:.4e} M☉")
+
+        if 'bh_spin' in data:
+            self.bh_spin_label.setText(f"{data['bh_spin']:.4f}")
+
+        if 'r_min' in data:
+            self.r_min_label.setText(f"{data['r_min']:.4f} R_g")
+
+        if 'r_max' in data:
+            self.r_max_label.setText(f"{data['r_max']:.4f} R_g")
+
+        if 'r_mean' in data:
+            self.r_mean_label.setText(f"{data['r_mean']:.4f} R_g")
+
+        if 'isco_radius' in data:
+            self.isco_radius_label.setText(f"{data['isco_radius']:.4f} R_g")
+
+        if 'particles_within_isco' in data:
+            self.particles_in_isco_label.setText(f"{int(data['particles_within_isco']):,}")
+
+
+class DiagnosticsWidget(QWidget):
+    """
+    Comprehensive diagnostics widget (TASK2).
+
+    Combines particle statistics, performance metrics, and coordinate data
+    in a multi-panel layout optimized for ultrawide monitors.
+
+    Features:
+    - Particle statistics: min/max/mean/stddev for all quantities
+    - Performance metrics: wall time, steps/sec, GPU status
+    - Coordinate/metric data: GR-specific information (conditional)
+    - Layout optimized for 2560px+ width displays
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Main layout with splitter for resizable panels
+        main_layout = QHBoxLayout()
+
+        # Create splitter for side-by-side panels
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Left panel: Particle Statistics
+        self.particle_stats = ParticleStatsTable()
+        splitter.addWidget(self.particle_stats)
+
+        # Middle panel: Performance Metrics
+        self.performance_metrics = PerformanceMetricsWidget()
+        splitter.addWidget(self.performance_metrics)
+
+        # Right panel: Coordinate/Metric Data (GR mode)
+        self.coordinate_metric = CoordinateMetricWidget()
+        splitter.addWidget(self.coordinate_metric)
+
+        # Set initial sizes (roughly equal)
+        splitter.setSizes([400, 300, 300])
+
+        main_layout.addWidget(splitter)
+        self.setLayout(main_layout)
+
+        # Set minimum width hint for ultrawide optimization
+        self.setMinimumWidth(1200)
+
+    def update_diagnostics(self, data: Dict):
+        """
+        Update all diagnostic panels.
+
+        Parameters:
+            data: Dictionary containing all diagnostic data:
+                - 'particle_stats': dict of quantity stats
+                - 'performance': dict of performance metrics
+                - 'coordinate_metric': dict of GR data
+        """
+        # Update particle statistics
+        if 'particle_stats' in data:
+            self.particle_stats.update_stats(data['particle_stats'])
+
+        # Update performance metrics
+        if 'performance' in data:
+            self.performance_metrics.update_metrics(data['performance'])
+
+        # Update coordinate/metric data
+        if 'coordinate_metric' in data:
+            self.coordinate_metric.update_data(data['coordinate_metric'])
+
+    def set_demo_data(self):
+        """Set demo data for testing the widget."""
+        demo_data = {
+            'particle_stats': {
+                'density': {'min': 1e-10, 'max': 1e-5, 'mean': 1e-7, 'std': 1e-8},
+                'pressure': {'min': 1e-12, 'max': 1e-8, 'mean': 1e-10, 'std': 1e-11},
+                'temperature': {'min': 1e3, 'max': 1e6, 'mean': 5e4, 'std': 1e4},
+                'sound_speed': {'min': 0.01, 'max': 0.1, 'mean': 0.05, 'std': 0.01},
+                'velocity_magnitude': {'min': 0.001, 'max': 0.5, 'mean': 0.1, 'std': 0.05},
+                'smoothing_length': {'min': 0.05, 'max': 0.2, 'mean': 0.1, 'std': 0.02},
+                'internal_energy': {'min': 1e5, 'max': 1e8, 'mean': 1e6, 'std': 1e5},
+            },
+            'performance': {
+                'wall_time': 3661,  # 1 hour, 1 minute, 1 second
+                'sim_time': 0.5,
+                'step_count': 10000,
+                'dt': 1e-5,
+                'steps_per_sec': 15.3,
+                'gpu_available': True,
+                'memory_mb': 256.5,
+            },
+            'coordinate_metric': {
+                'metric_type': 'Schwarzschild',
+                'coordinate_system': 'Boyer-Lindquist',
+                'bh_mass': 1e6,
+                'bh_spin': 0.0,
+                'r_min': 3.5,
+                'r_max': 100.0,
+                'r_mean': 25.0,
+                'isco_radius': 6.0,
+                'particles_within_isco': 150,
+            }
+        }
+        self.update_diagnostics(demo_data)
+
+
 class DataDisplayWidget(QWidget):
     """
     Main data display widget with tabs for different views.
@@ -286,14 +625,9 @@ class DataDisplayWidget(QWidget):
         stats_tab.setLayout(stats_layout)
         tabs.addTab(stats_tab, "Statistics")
 
-        # Tab 3: Diagnostics (placeholder)
-        diagnostics_tab = QWidget()
-        diag_layout = QVBoxLayout()
-        diag_layout.addWidget(QLabel("Diagnostic information will be displayed here."))
-        diag_layout.addStretch()
-        diagnostics_tab.setLayout(diag_layout)
-
-        tabs.addTab(diagnostics_tab, "Diagnostics")
+        # Tab 3: Comprehensive Diagnostics (TASK2)
+        self.diagnostics_widget = DiagnosticsWidget()
+        tabs.addTab(self.diagnostics_widget, "Diagnostics")
 
         layout.addWidget(tabs)
 
@@ -351,7 +685,8 @@ class DataDisplayWidget(QWidget):
         if self.demo_time >= 100:
             self.stop_demo_mode()
 
-    def update_live_data(self, time: float, energies: Dict[str, float], stats: Dict[str, float]):
+    def update_live_data(self, time: float, energies: Dict[str, float], stats: Dict[str, float],
+                         diagnostics: Optional[Dict] = None):
         """
         Update with live simulation data.
 
@@ -359,9 +694,21 @@ class DataDisplayWidget(QWidget):
             time: Current simulation time
             energies: Energy dictionary
             stats: Statistics dictionary
+            diagnostics: Optional diagnostics data for TASK2 comprehensive panel
         """
         self.energy_plot.update_data(time, energies)
         self.statistics_widget.update_statistics(stats)
+        if diagnostics is not None:
+            self.diagnostics_widget.update_diagnostics(diagnostics)
+
+    def update_diagnostics(self, diagnostics: Dict):
+        """
+        Update diagnostics panel (TASK2).
+
+        Parameters:
+            diagnostics: Dictionary containing particle_stats, performance, coordinate_metric
+        """
+        self.diagnostics_widget.update_diagnostics(diagnostics)
 
     def _export_energy_data(self):
         """Export energy data to CSV file."""

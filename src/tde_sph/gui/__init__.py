@@ -51,7 +51,12 @@ if HAS_PYQT:
     from tde_sph.gui.main_window import TDESPHMainWindow, main as launch_gui
     from tde_sph.gui.config_editor import ConfigEditorWidget, YAMLSyntaxHighlighter
     from tde_sph.gui.control_panel import ControlPanelWidget
-    from tde_sph.gui.data_display import DataDisplayWidget, EnergyPlotWidget, StatisticsWidget
+    from tde_sph.gui.data_display import (
+        DataDisplayWidget, EnergyPlotWidget, StatisticsWidget,
+        DiagnosticsWidget, ParticleStatsTable, PerformanceMetricsWidget,
+        CoordinateMetricWidget
+    )
+    from tde_sph.gui.simulation_thread import SimulationThread
 else:
     # Provide placeholders if PyQt not available
     TDESPHMainWindow = None
@@ -60,6 +65,11 @@ else:
     DataDisplayWidget = None
     EnergyPlotWidget = None
     StatisticsWidget = None
+    DiagnosticsWidget = None
+    ParticleStatsTable = None
+    PerformanceMetricsWidget = None
+    CoordinateMetricWidget = None
+    SimulationThread = None
     YAMLSyntaxHighlighter = None
     launch_gui = None
 
@@ -70,6 +80,11 @@ __all__ = [
     'DataDisplayWidget',
     'EnergyPlotWidget',
     'StatisticsWidget',
+    'DiagnosticsWidget',
+    'ParticleStatsTable',
+    'PerformanceMetricsWidget',
+    'CoordinateMetricWidget',
+    'SimulationThread',
     'YAMLSyntaxHighlighter',
     'launch_gui',
     'HAS_PYQT',

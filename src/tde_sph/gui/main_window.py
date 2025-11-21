@@ -49,11 +49,13 @@ try:
     from tde_sph.gui.config_editor import ConfigEditorWidget
     from tde_sph.gui.control_panel import ControlPanelWidget
     from tde_sph.gui.data_display import DataDisplayWidget
+    from tde_sph.gui.simulation_thread import SimulationThread
 except ImportError:
     # Fallback for testing main_window.py in isolation
     ConfigEditorWidget = None
     ControlPanelWidget = None
     DataDisplayWidget = None
+    SimulationThread = None
 
 
 class TDESPHMainWindow(QMainWindow):
@@ -100,6 +102,7 @@ class TDESPHMainWindow(QMainWindow):
         # Current state
         self.current_config_file: Optional[Path] = None
         self.simulation_running = False
+        self.simulation_thread: Optional['SimulationThread'] = None
 
         # Build UI components
         self._create_widgets()
@@ -582,16 +585,22 @@ physics:
         elif self.config_editor is not None and self.config_editor.is_modified():
             self.save_config()
 
-        # Start simulation
+        # Start simulation in background thread
         self.simulation_running = True
         self.simulation_started.emit()
 
         if self.control_panel is not None:
             self.control_panel.on_simulation_started()
 
-        self.statusBar().showMessage("Simulation started", 3000)
+        # Launch simulation thread (TASK2)
+        if SimulationThread is not None:
+            self.simulation_thread = SimulationThread(config)
+            self.simulation_thread.progress_updated.connect(self._on_progress_updated)
+            self.simulation_thread.simulation_finished.connect(self._on_simulation_finished)
+            self.simulation_thread.error_occurred.connect(self._on_simulation_error)
+            self.simulation_thread.start()
 
-        # TODO: Actually launch simulation in background thread
+        self.statusBar().showMessage("Simulation started", 3000)
 
     def stop_simulation(self):
         """Stop the running simulation."""
@@ -606,6 +615,12 @@ physics:
         )
 
         if reply == QMessageBox.StandardButton.Yes:
+            # Request thread stop
+            if self.simulation_thread is not None:
+                self.simulation_thread.request_stop()
+                self.simulation_thread.wait(5000)  # Wait up to 5 seconds
+                self.simulation_thread = None
+
             self.simulation_running = False
             self.simulation_stopped.emit()
 
@@ -613,6 +628,67 @@ physics:
                 self.control_panel.on_simulation_stopped()
 
             self.statusBar().showMessage("Simulation stopped", 3000)
+
+    def _on_progress_updated(self, stats: dict):
+        """
+        Handle progress update from simulation thread (TASK2).
+
+        Updates diagnostics widget with comprehensive data.
+        """
+        # Update data display with live data
+        if self.data_display is not None:
+            # Update diagnostics panel
+            if hasattr(self.data_display, 'update_diagnostics'):
+                self.data_display.update_diagnostics(stats)
+
+            # Update energy plot and statistics
+            if 'energies' in stats:
+                sim_time = stats.get('performance', {}).get('sim_time', 0.0)
+                basic_stats = {
+                    'n_particles': stats.get('n_particles', 0),
+                    'total_mass': stats.get('total_mass', 0.0),
+                    'kinetic_energy': stats.get('energies', {}).get('kinetic', 0.0),
+                    'potential_energy': stats.get('energies', {}).get('potential', 0.0),
+                    'internal_energy': stats.get('energies', {}).get('internal', 0.0),
+                    'total_energy': stats.get('energies', {}).get('total', 0.0),
+                }
+                self.data_display.update_live_data(
+                    sim_time,
+                    stats['energies'],
+                    basic_stats
+                )
+
+        # Update control panel progress
+        if self.control_panel is not None:
+            perf = stats.get('performance', {})
+            step_count = perf.get('step_count', 0)
+            # Update progress bar if control panel has that method
+            if hasattr(self.control_panel, 'update_progress'):
+                self.control_panel.update_progress(step_count, perf.get('sim_time', 0.0))
+
+    def _on_simulation_finished(self):
+        """Handle simulation completion."""
+        self.simulation_running = False
+        self.simulation_thread = None
+        self.simulation_stopped.emit()
+
+        if self.control_panel is not None:
+            self.control_panel.on_simulation_stopped()
+
+        self.statusBar().showMessage("Simulation completed", 5000)
+        QMessageBox.information(self, "Simulation Complete", "The simulation has finished successfully.")
+
+    def _on_simulation_error(self, error_message: str):
+        """Handle simulation error."""
+        self.simulation_running = False
+        self.simulation_thread = None
+        self.simulation_stopped.emit()
+
+        if self.control_panel is not None:
+            self.control_panel.on_simulation_stopped()
+
+        self.statusBar().showMessage("Simulation error", 5000)
+        QMessageBox.critical(self, "Simulation Error", f"An error occurred:\n\n{error_message}")
 
     # -------------------------------------------------------------------------
     # Other menu actions
