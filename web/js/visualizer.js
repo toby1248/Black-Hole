@@ -21,6 +21,12 @@ class Visualizer {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
 
+        // Check for WebGL support
+        if (!this.checkWebGLSupport()) {
+            this.showWebGLError();
+            return;
+        }
+
         // Scene components
         this.scene = null;
         this.camera = null;
@@ -52,6 +58,51 @@ class Visualizer {
 
         // Initialize
         this.init();
+    }
+
+    checkWebGLSupport() {
+        /**
+         * Check if WebGL is available in the browser.
+         * Returns: boolean - true if WebGL is supported
+         */
+        try {
+            const canvas = document.createElement('canvas');
+            const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            return !!(gl && gl instanceof WebGLRenderingContext);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    showWebGLError() {
+        /**
+         * Display WebGL not supported message.
+         */
+        const container = this.canvas.parentElement;
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'webgl-error';
+        errorDiv.innerHTML = `
+            <h2>WebGL Not Supported</h2>
+            <p>Your browser or device does not support WebGL, which is required for 3D visualization.</p>
+            <p>Please try:</p>
+            <ul>
+                <li>Updating your browser to the latest version</li>
+                <li>Enabling hardware acceleration in browser settings</li>
+                <li>Using a different browser (Chrome, Firefox, Edge recommended)</li>
+            </ul>
+        `;
+        errorDiv.style.cssText = `
+            padding: 40px;
+            text-align: center;
+            background: #2a2a2a;
+            color: #fff;
+            border-radius: 8px;
+            max-width: 500px;
+            margin: 50px auto;
+        `;
+        container.appendChild(errorDiv);
+        this.canvas.style.display = 'none';
+        console.error('WebGL is not supported in this browser');
     }
 
     init() {
