@@ -1,138 +1,537 @@
-goal: CUDA-accelerated backend for existing TDE-SPH modules (drop-in, standalone replacements)
-version: 1.1
-date_created: 2025-11-18
-last_updated: 2025-11-18
-owner: TDE-SPH CUDA Team
-status: Planned
-tags: [cuda, backend, optimisation, SPH, gravity, linear-algebra, Python]
-Role and Scope
-You are working in a module directory that already has a working Python/NumPy implementation.
+# Claudiomiro - Development Guide for Claude
 
-Your mission is to implement a CUDA-backed module that can fully replace this directory’s existing runtime behaviour without changing how other modules call into it.
+## What is Claudiomiro?
 
-Public API must remain identical (class names, method signatures, free functions).
+**Claudiomiro** is a CLI development automation tool that uses AI (Claude, Codex, Gemini, DeepSeek, GLM) to execute complex tasks autonomously and in parallel.
 
-Behaviour must match the CPU implementation within agreed numerical tolerances.
+Unlike traditional assistants that stop after one response, Claudiomiro **manages the entire development lifecycle**:
 
-CUDA-specific data structures and kernels must remain internal to this module.
+- 🧠 **Intelligent Decomposition** - Breaks complex problems into manageable, parallelizable tasks
+- 🔄 **Autonomous Execution** - Continuous loop until 100% task completion (no "continue" prompts)
+- ⚡ **Parallel Execution** - Runs independent tasks simultaneously
+- 🧪 **Automatic Testing** - Executes and fixes failures automatically
+- 👨‍💻 **Automated Code Review** - Senior-level review before testing
+- 📊 **Production-ready Commits** - Tested, reviewed, and documented code
 
-Core Expectations
-Module-level replacement
+### Key Features
 
-The module you implement (e.g. hydro_forces_cuda.py, newtonian_cuda.py) must be usable as a standalone substitute:
+- **Language**: JavaScript/Node.py
+- **Architecture**: Modular step system that executes sequentially
+- **Parallel Execution**: DAG Executor to run independent tasks simultaneously
+- **Multiple AI Executors**: Support for Claude, Codex, Gemini, DeepSeek, and GLM
+- **Complete Automation**: From planning to final commit
 
-Existing code should be able to switch imports from CPU to CUDA versions without further changes.
+## Development Conventions
 
-No changes to global interfaces or orchestration code from inside this module.
+### 1. Code Language
 
-Vector arithmetic and matrix-based layouts
+**CRITICAL RULE**: All code, comments, variable names, function names, and documentation MUST be written in English.
 
-Express particle data as large contiguous vectors and matrices:
+```javascript
+// ✅ CORRECT - English code and comments
+function calculateTotal(items) {
+  // Filter active items only
+  const activeItems = items.filter(item => item.isActive);
+  return activeItems.reduce((sum, item) => sum + item.price, 0);
+}
 
-Positions, velocities, accelerations: float32[N, 3] (or SoA with three float32[N] arrays).
+// ❌ WRONG - Portuguese or mixed languages
+function calcularTotal(items) {
+  // Filtra apenas itens ativos
+  const itensAtivos = items.filter(item => item.isActive);
+  return itensAtivos.reduce((soma, item) => soma + item.price, 0);
+}
+```
 
-Masses and scalar fields: float32[N] or float32[N, 1].
+**Exception**: User-facing text (UI messages, error messages shown to end users) can be in Portuguese if the target audience is Brazilian, but code structure must remain in English.
 
-Design kernels to operate on these arrays using:
+### 2. File Naming Conventions
 
-Vector arithmetic in a data-parallel style.
+#### Markdown Files in Steps
 
-Blocked loads into shared memory to emulate matrix tiles.
+**CRITICAL RULE**: All `.md` files inside `src/steps/` MUST use lowercase names.
 
-For Newtonian gravity in particular:
+```
+✅ CORRECT:
+src/steps/step5/todo.md
+src/steps/step5/research.md
+src/steps/step5/context.md
+src/steps/templates/todo.md
 
-Investigate whether the force calculation can be structured as:
+❌ WRONG:
+src/steps/step5/TODO.md
+src/steps/step5/RESEARCH.md
+src/steps/step5/CONTEXT.md
+src/steps/templates/TODO.md
+```
 
-Blocked interaction matrices processed tile-by-tile (matrix-style N-body).
+**Why lowercase?**
+- ✅ Consistent with Unix/Linux conventions
+- ✅ Avoids case-sensitivity issues across different operating systems
+- ✅ Easier to type and reference in code
+- ✅ Standard practice in modern Node.py projects
 
-Or batched vector operations that resemble matrix–vector products.
+### 3. Test Structure
 
-Decide and document whether a linear-algebra-style formulation (possibly using cuBLAS or custom GEMM-like kernels) is beneficial for your target N:
+**FUNDAMENTAL RULE**: Every code file must have its corresponding test file created simultaneously.
 
-If yes, implement and describe the scheme.
+#### Naming Pattern
 
-If no, justify briefly (e.g. O(N²) memory/compute, performance vs classic pairwise kernel).
+```
+file.py             → file.test.py
+index.py            → index.test.py
+step0.py            → step0.test.py
+claude-executor.py  → claude-executor.test.py
+```
 
-Respect core interfaces
+#### Test Location
 
-Conform strictly to abstract base classes in tde_sph/core/interfaces.py.
+**CRITICAL RULE**: Test files MUST be in the same directory as the source file, NOT in a separate `__tests__/` folder.
 
-Do not change these ABCs here.
+- ✅ **Correct**: `file.py` → `file.test.py` (same directory)
+- ❌ **Wrong**: `file.py` → `__tests__/file.test.py` (separate directory)
 
-Add optional helpers only if they do not break any existing callers.
+#### Practical Example
 
-Configuration and modes
+```
+src/
+├── services/
+│   ├── claude-executor.py
+│   └── claude-executor.test.py
+├── steps/
+│   ├── step0/
+│   │   ├── index.py
+│   │   ├── index.test.py
+│   │   ├── generate-todo.py
+│   │   └── generate-todo.test.py
+│   └── step5/
+│       ├── index.py
+│       ├── index.test.py
+│       ├── generate-research.py
+│       ├── generate-research.test.py
+│       ├── generate-context.py
+│       └── generate-context.test.py
+└── utils/
+    ├── validation.py
+    └── validation.test.py
+```
 
-Use the existing config structures for:
+**Why this structure?**
+- ✅ Tests are immediately visible next to the code they test
+- ✅ Easier to maintain test and source file together
+- ✅ Refactoring moves both files together
+- ✅ Clear 1:1 relationship between source and test
 
-CPU vs CUDA backend selection.
+### 4. Creating New Files
 
-Newtonian vs GR or other physics modes.
+When creating a new code file:
 
-Avoid new global flags; backend selection should be explicit and local.
+1. ✅ **Create the main file** (e.g., `new-feature.py`)
+2. ✅ **Immediately create the test file** (e.g., `new-feature.test.py`)
+3. ✅ **Implement unit tests** for main functionalities
+4. ✅ **Run tests** with `npm test` before committing
 
-Numerics, precision, and stability
+When creating markdown files in `src/steps/`:
 
-Default to FP32 on the GPU; upcast to FP64 only for clearly identified sensitive operations.
+1. ✅ **Always use lowercase names** (e.g., `todo.md`, `research.md`, `context.md`)
+2. ❌ **Never use uppercase names** (e.g., `TODO.md`, `RESEARCH.md`, `CONTEXT.md`)
 
-Be explicit where dtypes change between host and device.
+### 5. Testing Framework
 
-Ensure that vectorised and matrix-style implementations remain numerically stable for long integrations (especially gravity).
+- **Framework**: Jest
+- **Run tests command**: `npm test`
+- **Coverage command**: `npm run test:coverage`
 
-Performance discipline
+### 6. Recommended Test Structure
 
-Minimise host–device transfers and small kernel launches.
+```javascript
+// example.test.py
+const { function1, function2 } = require('./example');
 
-Prefer:
+describe('Module Name', () => {
+  describe('function1', () => {
+    test('should do X when Y', () => {
+      // Arrange
+      const input = 'value';
 
-Persistent device arrays for particle state.
+      // Act
+      const result = function1(input);
 
-Fused kernels for SPH loops and neighbour interactions.
+      // Assert
+      expect(result).toBe('expected');
+    });
 
-Tiled N-body kernels for Newtonian gravity.
+    test('should throw error when input is invalid', () => {
+      expect(() => function1(null)).toThrow();
+    });
+  });
 
-Profile both “pure kernel” and “linear algebra-style” variants when both exist; keep the faster one as the default and leave the other as an optional code path if it is still useful.
+  describe('function2', () => {
+    test('should return true for condition X', () => {
+      expect(function2('condition')).toBe(true);
+    });
+  });
+});
+```
 
-Testing Expectations
-For each major public method, create tests that:
+### 7. Mocks and Test Utilities
 
-Instantiate both CPU and CUDA implementations.
+**CRITICAL RULE**: Each test file MUST be completely self-contained. ALL mocks, utilities, and test helpers must be defined within the test file itself.
 
-Run identical, small test problems.
+**❌ WRONG - External mocks/utilities:**
+```javascript
+// ❌ DON'T create separate mock files
+src/__tests__/__mocks__/logger.py
+src/__tests__/test-utils.py
+src/test-mocks/child_process.py
 
-Compare outputs (arrays, scalars) within reasonable tolerances.
+// ❌ DON'T import mocks from other locations
+const { MockLogger } = require('../test-mocks/logger');
+const { setupTest } = require('../test-utils');
+```
 
-Include tests that specifically exercise:
+**✅ CORRECT - Self-contained test file:**
+```javascript
+// claude-executor.test.py
+const { executeClaude } = require('./claude-executor');
+const { EventEmitter } = require('events');
 
-Vectorised kernels over large arrays.
+// Mock all dependencies
+jest.mock('fs');
+jest.mock('child_process');
 
-Any matrix-style or cuBLAS-based implementation you introduce.
+// Define mocks INSIDE the test file
+class MockChildProcess extends EventEmitter {
+  constructor() {
+    super();
+    this.stdout = new EventEmitter();
+    this.stderr = new EventEmitter();
+    this.stdin = {
+      write: jest.fn(),
+      end: jest.fn()
+    };
+  }
 
-Ensure tests are small enough for CI but sensitive enough to catch indexing errors, race conditions, and precision regressions.
+  kill(signal) {
+    this.emit('close', 0);
+  }
+}
 
-Local Agent Tasks (per module)
-Inside this directory:
+// Test helper functions INSIDE the test file
+function setupTestEnvironment() {
+  const consoleLog = jest.spyOn(console, 'log').mockImplementation();
+  return { consoleLog };
+}
 
-Map each public class/method/function in the CPU module to the CUDA-backed version.
+describe('claude-executor', () => {
+  let mocks;
 
-Design data layouts and kernels with vector arithmetic and large-array operations in mind.
+  beforeEach(() => {
+    mocks = setupTestEnvironment();
+  });
 
-For Newtonian gravity modules, explicitly evaluate:
+  test('should execute successfully', () => {
+    // Test implementation
+  });
+});
+```
 
-Classic pairwise kernels with shared-memory tiling.
+**Why self-contained tests?**
+- ✅ Each test file is independent and portable
+- ✅ No hidden dependencies or shared state between tests
+- ✅ Easier to understand - everything you need is in one place
+- ✅ No need to search for mock definitions in other files
+- ✅ Refactoring one test doesn't break others
+- ✅ Copy-paste a test file and it still works
 
-Matrix-style or batched linear algebra formulations.
-And record your decision and rationale.
+**Exception for duplication:**
+If you find yourself duplicating the EXACT same mock code across multiple test files, that's acceptable. Code duplication in tests is better than hidden dependencies. Each test file remains self-sufficient.
 
-Implement kernels and integration glue for this module only.
+## Project Architecture
 
-Add or extend tests comparing CPU and CUDA implementations.
+### Single Responsibility Principle (SRP)
 
-Document:
+**CRITICAL ARCHITECTURAL RULE**: Each file must have ONE and ONLY ONE primary responsibility.
 
-Data layouts and dtypes.
+#### Core Principles
 
-Where linear algebra primitives are used.
+1. **One File = One Responsibility**
+   - Each `.py` file should do ONE thing
+   - If a file has multiple distinct responsibilities, split it into separate files
+   - Helper functions that support the main responsibility CAN stay in the same file
+   - Functions with different responsibilities MUST be in separate files
 
-Any intentional approximations or limitations.
+2. **Helper vs. Different Responsibility**
 
+   **✅ Helper Functions (can stay together):**
+   ```javascript
+   // user-service.py - ONE responsibility: user operations
+
+   // Main responsibility
+   const createUser = async (userData) => {
+     const validated = validateUserData(userData); // ✅ Helper
+     const hashed = hashPassword(validated.password); // ✅ Helper
+     return await db.insert({ ...validated, password: hashed });
+   };
+
+   // Helper functions (support main responsibility)
+   const validateUserData = (data) => { /* validation logic */ };
+   const hashPassword = (password) => { /* hashing logic */ };
+
+   module.exports = { createUser };
+   ```
+
+   **❌ Different Responsibilities (must split):**
+   ```javascript
+   // ❌ BAD: user-operations.py has MULTIPLE responsibilities
+
+   const createUser = async (userData) => { /* ... */ };     // Responsibility 1: Create user
+   const sendEmailNotification = async (email) => { /* ... */ }; // Responsibility 2: Send email
+   const generatePDFReport = async (userId) => { /* ... */ }; // Responsibility 3: Generate PDF
+
+   // These should be in separate files!
+   ```
+
+   **✅ GOOD: Split into separate files:**
+   ```javascript
+   // user-service.py
+   const createUser = async (userData) => { /* ... */ };
+   module.exports = { createUser };
+
+   // email-service.py
+   const sendEmailNotification = async (email) => { /* ... */ };
+   module.exports = { sendEmailNotification };
+
+   // report-generator.py
+   const generatePDFReport = async (userId) => { /* ... */ };
+   module.exports = { generatePDFReport };
+   ```
+
+#### When to Split a File
+
+**Split when:**
+- ✅ A function does something fundamentally different from the main purpose
+- ✅ You can describe the function without mentioning the main responsibility
+- ✅ The function could be reused in a completely different context
+- ✅ The function has a different reason to change than the main code
+
+**Keep together when:**
+- ✅ The function only makes sense in context of the main responsibility
+- ✅ The function is a detail/step of the main algorithm
+- ✅ The function validates/transforms data for the main function
+- ✅ The function would be meaningless outside this file
+
+#### Real Examples from Claudiomiro
+
+**Example 1: Step5 (Correctly Split)**
+
+```
+src/steps/step5/
+├── index.py                    # Responsibility: Execute task
+├── generate-research.py        # Responsibility: Generate RESEARCH.md
+└── generate-context.py         # Responsibility: Generate CONTEXT.md
+```
+
+**Why split?**
+- Each file has ONE clear purpose
+- `generate-research.py` could fail/change without affecting `generate-context.py`
+- Each can be tested independently
+- Each has a different reason to change
+
+**Example 2: Step4 (Correctly Split)**
+
+```
+src/steps/step4/
+├── index.py              # Responsibility: Orchestrate step4
+├── generate-todo.py      # Responsibility: Generate TODO.md
+├── analyze-split.py      # Responsibility: Analyze if task should split
+└── utils.py              # Responsibility: Shared utilities
+```
+
+**Example 3: Step5 Internal (Helpers Stay Together)**
+
+```javascript
+// generate-research.py - ONE responsibility: Generate RESEARCH.md
+
+const generateResearchFile = async (task) => {
+  const folder = (file) => path.join(state.claudiomiroFolder, task, file); // ✅ Helper
+
+  if(shouldSkip(folder)) return; // ✅ Helper
+
+  await executeClaude(buildPrompt(task, folder)); // ✅ Helper
+
+  validateOutput(folder); // ✅ Helper
+};
+
+// These are helpers - they only exist to support generateResearchFile
+const shouldSkip = (folder) => { /* ... */ };
+const buildPrompt = (task, folder) => { /* ... */ };
+const validateOutput = (folder) => { /* ... */ };
+```
+
+#### Decision Tree: Split or Keep?
+
+```
+Does the function have a different primary purpose?
+│
+├─ YES → Split into separate file
+│   Example: generateResearchFile() and generateContextFile()
+│   are different responsibilities
+│
+└─ NO → Is it a helper for the main function?
+    │
+    ├─ YES → Keep in same file
+    │   Example: validateInput(), formatData(), buildQuery()
+    │   are helpers for the main function
+    │
+    └─ NO → Could it be reused elsewhere independently?
+        │
+        ├─ YES → Move to utils/ or shared module
+        │   Example: formatDate(), parseJSON(), retry()
+        │
+        └─ NO → Keep as private helper in same file
+```
+
+#### Anti-Patterns to Avoid
+
+**❌ God Files (Multiple Responsibilities)**
+```javascript
+// ❌ BAD: task-manager.py doing everything
+const createTask = () => { /* ... */ };
+const sendEmail = () => { /* ... */ };
+const generateReport = () => { /* ... */ };
+const validateUser = () => { /* ... */ };
+const logToDatabase = () => { /* ... */ };
+```
+
+**✅ GOOD: Split by Responsibility**
+```javascript
+// task-service.py
+const createTask = () => { /* ... */ };
+
+// email-service.py
+const sendEmail = () => { /* ... */ };
+
+// report-service.py
+const generateReport = () => { /* ... */ };
+
+// user-validator.py
+const validateUser = () => { /* ... */ };
+
+// logger.py
+const logToDatabase = () => { /* ... */ };
+```
+
+**❌ Over-Splitting (Too Granular)**
+```javascript
+// ❌ BAD: Every tiny helper in separate file
+// user-service.py
+const createUser = () => { /* ... */ };
+
+// user-validator.py (OVERKILL - just a helper)
+const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+// user-hasher.py (OVERKILL - just a helper)
+const hashPassword = (pwd) => bcrypt.hash(pwd, 10);
+```
+
+**✅ GOOD: Helpers Stay with Main Function**
+```javascript
+// user-service.py
+const createUser = async (userData) => {
+  if(!validateEmail(userData.email)) throw new Error('Invalid email');
+  const hashed = await hashPassword(userData.password);
+  return db.insert({ ...userData, password: hashed });
+};
+
+// Helpers (support createUser)
+const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const hashPassword = (pwd) => bcrypt.hash(pwd, 10);
+
+module.exports = { createUser };
+```
+
+#### Benefits of SRP
+
+1. ✅ **Easier to Test** - Each file tests one thing
+2. ✅ **Easier to Understand** - Clear what each file does
+3. ✅ **Easier to Maintain** - Changes are localized
+4. ✅ **Easier to Reuse** - Extract what you need
+5. ✅ **Easier to Debug** - Smaller surface area
+6. ✅ **Better Git History** - Changes are focused
+
+#### Quality Checklist
+
+Before committing, ask:
+
+- [ ] Can I describe this file's purpose in one sentence?
+- [ ] Do all functions in this file relate to the same core responsibility?
+- [ ] Are there functions that could live independently?
+- [ ] Would splitting make testing easier?
+- [ ] Would future developers understand the file's purpose immediately?
+
+If any answer suggests splitting, do it!
+
+---
+
+### Step System
+
+Claudiomiro works through a sequence of steps:
+
+- **Step 0**: Task decomposition
+- **Step 1**: Execution planning
+- **Step 2**: Parallel implementation (DAG execution)
+- **Step 3**: Code review
+- **Step 4**: Automated testing
+- **Step 5**: Commit and push
+
+### AI Executors
+
+Each executor has its own logger and implementation:
+
+- `claude-executor.py` / `claude-logger.py`
+- `codex-executor.py` / `codex-logger.py`
+- `gemini-executor.py` / `gemini-logger.py`
+- `deep-seek-executor.py` / `deep-seek-logger.py`
+- `glm-executor.py` / `glm-logger.py`
+
+## Best Practices
+
+1. **Always write tests** - Code without tests doesn't enter the project
+2. **Test-first (when possible)** - TDD is encouraged
+3. **Mocks for external dependencies** - Never use real data or DB connections in tests
+4. **Code coverage** - Maintain high coverage (>80%)
+5. **Tests must be independent** - Each test should run in isolation
+6. **Descriptive names** - Use clear descriptions of what is being tested
+7. **Arrange-Act-Assert** - Organize tests in clear sections
+8. **English only** - All code, comments, and variable names in English
+
+## Useful Commands
+
+```bash
+# Run all tests
+npm test
+
+# Run tests with coverage
+npm run test:coverage
+
+# Run tests in watch mode
+npm test -- --watch
+
+# Run tests for a specific file
+npm test -- claude-executor.test.py
+```
+
+## Contributing
+
+When contributing to Claudiomiro:
+
+1. 📝 Create or update the main file (in English)
+2. 🧪 Create or update the corresponding test file (in English)
+3. ✅ Ensure all tests pass
+4. 📊 Check coverage
+5. 📤 Submit PR with code and tests
+
+---
+
+**Remember**: Claudiomiro automates development, but code quality starts with good tests and English code!
