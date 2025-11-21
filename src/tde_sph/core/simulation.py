@@ -631,6 +631,7 @@ class Simulation:
             'smoothing_length': self.particles.smoothing_length,
             'pressure': self.particles.pressure,
             'sound_speed': self.particles.sound_speed,
+            'temperature': self.particles.temperature,
         }
 
         write_snapshot(str(filename), particle_data, self.state.time, metadata)

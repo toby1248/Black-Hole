@@ -273,6 +273,27 @@ class ParticleSystem:
             return np.zeros(3, dtype=np.float32)
         return np.sum(self.masses[:, np.newaxis] * self.velocities, axis=0) / total_mass
 
+    # Backward compatibility: plural property aliases
+    @property
+    def smoothing_lengths(self) -> NDArrayFloat:
+        """Alias for smoothing_length (backward compatibility)."""
+        return self.smoothing_length
+
+    @smoothing_lengths.setter
+    def smoothing_lengths(self, value: NDArrayFloat) -> None:
+        """Setter for smoothing_lengths (backward compatibility)."""
+        self.smoothing_length = value.astype(np.float32, copy=False)
+
+    @property
+    def sound_speeds(self) -> NDArrayFloat:
+        """Alias for sound_speed (backward compatibility)."""
+        return self.sound_speed
+
+    @sound_speeds.setter
+    def sound_speeds(self, value: NDArrayFloat) -> None:
+        """Setter for sound_speeds (backward compatibility)."""
+        self.sound_speed = value.astype(np.float32, copy=False)
+
     def __repr__(self) -> str:
         """String representation of particle system."""
         return (
