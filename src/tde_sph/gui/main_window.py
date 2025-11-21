@@ -50,12 +50,14 @@ try:
     from tde_sph.gui.control_panel import ControlPanelWidget
     from tde_sph.gui.data_display import DataDisplayWidget
     from tde_sph.gui.simulation_thread import SimulationThread
+    from tde_sph.gui.preferences_dialog import PreferencesDialog
 except ImportError:
     # Fallback for testing main_window.py in isolation
     ConfigEditorWidget = None
     ControlPanelWidget = None
     DataDisplayWidget = None
     SimulationThread = None
+    PreferencesDialog = None
 
 
 class TDESPHMainWindow(QMainWindow):
@@ -695,9 +697,14 @@ physics:
     # -------------------------------------------------------------------------
 
     def show_preferences(self):
-        """Open preferences dialog."""
-        # TODO: Implement preferences dialog
-        QMessageBox.information(self, "Preferences", "Preferences dialog (coming soon)")
+        """Open preferences dialog (TASK4)."""
+        if PreferencesDialog is not None:
+            dialog = PreferencesDialog(self)
+            if dialog.exec() == 1:  # QDialog.Accepted
+                # Settings saved by dialog, optionally refresh UI
+                self.statusBar().showMessage("Preferences saved", 3000)
+        else:
+            QMessageBox.information(self, "Preferences", "Preferences dialog not available")
 
     def show_documentation(self):
         """Open documentation in browser."""

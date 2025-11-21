@@ -57,6 +57,7 @@ if HAS_PYQT:
         CoordinateMetricWidget
     )
     from tde_sph.gui.simulation_thread import SimulationThread
+    from tde_sph.gui.preferences_dialog import PreferencesDialog, get_preference, set_preference
 else:
     # Provide placeholders if PyQt not available
     TDESPHMainWindow = None
@@ -70,8 +71,11 @@ else:
     PerformanceMetricsWidget = None
     CoordinateMetricWidget = None
     SimulationThread = None
+    PreferencesDialog = None
     YAMLSyntaxHighlighter = None
     launch_gui = None
+    get_preference = None
+    set_preference = None
 
 __all__ = [
     'TDESPHMainWindow',
@@ -85,8 +89,11 @@ __all__ = [
     'PerformanceMetricsWidget',
     'CoordinateMetricWidget',
     'SimulationThread',
+    'PreferencesDialog',
     'YAMLSyntaxHighlighter',
     'launch_gui',
+    'get_preference',
+    'set_preference',
     'HAS_PYQT',
     'HAS_PYQT6',
 ]
