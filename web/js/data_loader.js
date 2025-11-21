@@ -384,6 +384,23 @@ class DataLoader {
     exportToJSON(filename = 'tde_sph_snapshots.json') {
         /**
          * Export all loaded snapshots to JSON file.
+         *
+         * JSON Format:
+         * [
+         *   {
+         *     "time": 0.0,           // Simulation time (code units)
+         *     "step": 0,             // Simulation step number
+         *     "n_particles": 12000,  // Number of particles
+         *     "positions": [...],    // Flat array [x1,y1,z1,x2,y2,z2,...] (3*n_particles)
+         *     "density": [...],      // Array of density values (n_particles)
+         *     "temperature": [...],  // Array of temperature values (n_particles)
+         *     "internal_energy": [...], // Array of internal energy (n_particles)
+         *     "velocity_magnitude": [...], // Array of velocity magnitudes (n_particles)
+         *     "pressure": [...],     // Array of pressure values (n_particles)
+         *     "entropy": [...]       // Array of entropy values (n_particles)
+         *   },
+         *   ...
+         * ]
          */
         const dataToExport = this.snapshots.map(snapshot => ({
             time: snapshot.time,
