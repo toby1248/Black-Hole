@@ -15,6 +15,12 @@ Date: 2025-11-18
 
 from typing import Optional
 from pathlib import Path
+import traceback
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 try:
     from PyQt6.QtWidgets import (
@@ -51,6 +57,7 @@ try:
     from tde_sph.gui.data_display import DataDisplayWidget
     from tde_sph.gui.simulation_thread import SimulationThread
     from tde_sph.gui.preferences_dialog import PreferencesDialog
+    from tde_sph.gui.web_viewer import create_web_viewer, HAS_WEB_ENGINE
 except ImportError:
     # Fallback for testing main_window.py in isolation
     ConfigEditorWidget = None
@@ -58,6 +65,34 @@ except ImportError:
     DataDisplayWidget = None
     SimulationThread = None
     PreferencesDialog = None
+    create_web_viewer = None
+    HAS_WEB_ENGINE = False
+
+
+def check_gpu_availability() -> tuple[bool, str]:
+    """
+    Check if GPU (CUDA) is available for simulation.
+
+    Returns:
+        Tuple of (is_available, message)
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            return True, f"GPU available: {device_name}"
+        else:
+            return False, "CUDA not available, using CPU"
+    except ImportError:
+        pass
+
+    try:
+        import cupy
+        return True, "CuPy GPU backend available"
+    except ImportError:
+        pass
+
+    return False, "No GPU backend found, using CPU (numpy)"
 
 
 class TDESPHMainWindow(QMainWindow):
@@ -587,6 +622,19 @@ physics:
         elif self.config_editor is not None and self.config_editor.is_modified():
             self.save_config()
 
+        # Check GPU availability (E.4)
+        gpu_available, gpu_message = check_gpu_availability()
+        logger.info(f"GPU check: {gpu_message}")
+        if not gpu_available:
+            QMessageBox.warning(
+                self,
+                "GPU Not Available",
+                f"{gpu_message}\n\nSimulation will continue using CPU, "
+                "which may be slower for large particle counts."
+            )
+            if self.control_panel is not None:
+                self.control_panel.log(f"Warning: {gpu_message}")
+
         # Start simulation in background thread
         self.simulation_running = True
         self.simulation_started.emit()
@@ -681,16 +729,35 @@ physics:
         QMessageBox.information(self, "Simulation Complete", "The simulation has finished successfully.")
 
     def _on_simulation_error(self, error_message: str):
-        """Handle simulation error."""
+        """
+        Handle simulation error (E.1).
+
+        Logs traceback, displays error message, and resets UI state.
+        """
+        # Log full error with traceback
+        logger.error(f"Simulation error: {error_message}")
+        logger.error(traceback.format_exc())
+
         self.simulation_running = False
         self.simulation_thread = None
         self.simulation_stopped.emit()
 
+        # Reset UI state
         if self.control_panel is not None:
             self.control_panel.on_simulation_stopped()
+            self.control_panel.log(f"ERROR: {error_message}")
 
-        self.statusBar().showMessage("Simulation error", 5000)
-        QMessageBox.critical(self, "Simulation Error", f"An error occurred:\n\n{error_message}")
+        # Reset data display to show error state
+        if self.data_display is not None and hasattr(self.data_display, 'show_error_state'):
+            self.data_display.show_error_state(error_message)
+
+        self.statusBar().showMessage("Simulation error - see log for details", 5000)
+        QMessageBox.critical(
+            self,
+            "Simulation Error",
+            f"An error occurred during simulation:\n\n{error_message}\n\n"
+            "Check the control panel log for more details."
+        )
 
     # -------------------------------------------------------------------------
     # Other menu actions
