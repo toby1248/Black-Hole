@@ -10,8 +10,11 @@
 // Global instances
 let visualizer;
 let dataLoader;
-let animationInterval = null;
+let animationFrameId = null;
 let isPlaying = false;
+let lastFrameTime = 0;
+let targetFPS = 30;
+let frameInterval = 1000 / 30;  // ms between frames
 
 // Initialize application
 document.addEventListener('DOMContentLoaded', () => {
@@ -237,22 +240,36 @@ function playAnimation() {
     document.getElementById('play-btn').disabled = true;
     document.getElementById('pause-btn').disabled = false;
 
-    const fps = parseInt(document.getElementById('fps-slider').value);
-    const interval = 1000 / fps;
+    // Update frame interval based on FPS slider
+    targetFPS = parseInt(document.getElementById('fps-slider').value);
+    frameInterval = 1000 / targetFPS;
+    lastFrameTime = performance.now();
 
-    animationInterval = setInterval(() => {
-        const snapshot = dataLoader.nextSnapshot();
+    // Start animation loop using requestAnimationFrame
+    animationLoop();
+}
 
-        if (snapshot) {
-            displaySnapshot(snapshot);
+function animationLoop(currentTime) {
+    if (!isPlaying) return;
 
-            // Update slider
-            document.getElementById('snapshot-slider').value = dataLoader.currentIndex;
-        } else {
-            // End of sequence
-            pauseAnimation();
-        }
-    }, interval);
+    animationFrameId = requestAnimationFrame(animationLoop);
+
+    // Throttle to target FPS
+    const elapsed = currentTime - lastFrameTime;
+    if (elapsed < frameInterval) return;
+
+    lastFrameTime = currentTime - (elapsed % frameInterval);
+
+    const snapshot = dataLoader.nextSnapshot();
+
+    if (snapshot) {
+        displaySnapshot(snapshot);
+        // Update slider
+        document.getElementById('snapshot-slider').value = dataLoader.currentIndex;
+    } else {
+        // End of sequence
+        pauseAnimation();
+    }
 }
 
 function pauseAnimation() {
@@ -262,9 +279,9 @@ function pauseAnimation() {
     document.getElementById('play-btn').disabled = false;
     document.getElementById('pause-btn').disabled = true;
 
-    if (animationInterval) {
-        clearInterval(animationInterval);
-        animationInterval = null;
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
     }
 }
 
@@ -299,14 +316,12 @@ function onSnapshotSliderChange(event) {
 }
 
 function onFPSChange(event) {
-    const fps = event.target.value;
+    const fps = parseInt(event.target.value);
     document.getElementById('fps-value').textContent = fps;
 
-    // Restart animation with new FPS if playing
-    if (isPlaying) {
-        pauseAnimation();
-        playAnimation();
-    }
+    // Update frame interval (animation loop will pick up new value)
+    targetFPS = fps;
+    frameInterval = 1000 / fps;
 }
 
 // ============================================================================
