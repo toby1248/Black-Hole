@@ -489,14 +489,10 @@ class Simulation:
             self.particles.density,
             self.particles.internal_energy
         )
-        # Temperature is optional but useful for diagnostics
-        temperature = self.eos.temperature(
+        self.particles.temperature = self.eos.temperature(
             self.particles.density,
             self.particles.internal_energy
         )
-        # Store in particles if it has a temperature attribute
-        if hasattr(self.particles, 'temperature'):
-            self.particles.temperature = temperature
 
     def compute_forces(self) -> Dict[str, NDArrayFloat]:
         """

@@ -42,6 +42,8 @@ class ParticleSystem:
         Pressure P computed from EOS.
     sound_speed : NDArrayFloat, shape (N,)
         Local sound speed cs from EOS.
+    temperature : NDArrayFloat, shape (N,)
+        Temperature T computed from EOS.
 
     Notes
     -----
@@ -115,6 +117,7 @@ class ParticleSystem:
         self.density = np.zeros(n_particles, dtype=np.float32)
         self.pressure = np.zeros(n_particles, dtype=np.float32)
         self.sound_speed = np.zeros(n_particles, dtype=np.float32)
+        self.temperature = np.zeros(n_particles, dtype=np.float32)
 
         # Validate shapes
         self._validate_shapes()
@@ -130,6 +133,7 @@ class ParticleSystem:
         assert self.density.shape == (n,), f"density shape mismatch: {self.density.shape}"
         assert self.pressure.shape == (n,), f"pressure shape mismatch: {self.pressure.shape}"
         assert self.sound_speed.shape == (n,), f"sound_speed shape mismatch: {self.sound_speed.shape}"
+        assert self.temperature.shape == (n,), f"temperature shape mismatch: {self.temperature.shape}"
 
     def get_positions(self) -> NDArrayFloat:
         """Get particle positions."""
@@ -162,6 +166,10 @@ class ParticleSystem:
     def get_smoothing_length(self) -> NDArrayFloat:
         """Get smoothing lengths."""
         return self.smoothing_length
+
+    def get_temperature(self) -> NDArrayFloat:
+        """Get temperatures."""
+        return self.temperature
 
     def set_positions(self, positions: NDArrayFloat) -> None:
         """Set particle positions."""
@@ -197,6 +205,11 @@ class ParticleSystem:
         """Set smoothing lengths."""
         assert smoothing_length.shape == (self.n_particles,)
         self.smoothing_length = smoothing_length.astype(np.float32, copy=False)
+
+    def set_temperature(self, temperature: NDArrayFloat) -> None:
+        """Set temperatures."""
+        assert temperature.shape == (self.n_particles,)
+        self.temperature = temperature.astype(np.float32, copy=False)
 
     def kinetic_energy(self) -> float:
         """
