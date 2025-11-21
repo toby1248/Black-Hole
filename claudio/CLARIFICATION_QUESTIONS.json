@@ -1,0 +1,219 @@
+[
+  {
+    "id": 1,
+    "category": "Scope & Requirements",
+    "title": "Desktop GUI Diagnostics Scope",
+    "context": "The Desktop GUI has a placeholder 'Diagnostics' tab (gui/data_display.py:289-296) that currently only shows 'Diagnostic information will be displayed here.'\n\nI found extensive diagnostic infrastructure already implemented but unused:\n- DiagnosticsWriter class with light curves, fallback rates, orbital elements, radial profiles (src/tde_sph/io/diagnostics.py)\n- EnergyDiagnostics class with comprehensive energy accounting\n- Per-particle data: temperature, pressure, sound speed, velocities (computed but not displayed)\n- Orbital diagnostics capabilities (compute_orbital_elements function exists)\n- Radial profile computation (density, temperature, pressure vs radius)\n\nCurrently displayed diagnostics:\n- Energy evolution plot (kinetic, potential, internal, conservation error)\n- Basic statistics table (10 quantities: particle count, masses, energies, mean/max density, mean/max temperature)",
+    "ambiguity": "Your request says 'much more debug and diagnostic data readout utility' but doesn't specify which diagnostics are most valuable for your scientific workflow.",
+    "question": "Which diagnostic capabilities should be prioritized for the Desktop GUI Diagnostics tab?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Essential Physics Only",
+        "description": "Add: Temperature distribution, timestep evolution, velocity statistics, pressure/sound speed stats. Quick implementation (2-3 hours)."
+      },
+      {
+        "key": "b",
+        "label": "Full Scientific Diagnostics",
+        "description": "Everything in (a) PLUS: Orbital element tracking (bound/unbound particles, eccentricity distributions), radial profiles (density, temp, pressure vs r), light curves, fallback rates. Complete implementation (1-2 days)."
+      },
+      {
+        "key": "c",
+        "label": "Performance & Debugging Focus",
+        "description": "Add: Per-step wall time tracking, memory usage, CPU profiling, timestep CFL diagnostics, particle neighbor counts, SPH kernel statistics. Developer-focused (~1 day)."
+      },
+      {
+        "key": "d",
+        "label": "Custom Selection",
+        "description": "You specify exactly which diagnostics from the available list (temperature, velocity, orbital elements, radial profiles, light curves, fallback rates, performance metrics)."
+      }
+    ],
+    "currentPatterns": "Current diagnostics: gui/data_display.py:234-405, Available infrastructure: src/tde_sph/io/diagnostics.py, src/tde_sph/core/energy_diagnostics.py"
+  },
+  {
+    "id": 2,
+    "category": "Technical Details",
+    "title": "Diagnostic Display Format",
+    "context": "Current GUI uses:\n- Matplotlib embedded plots for energy evolution (2 subplots with time series)\n- QTableWidget for statistics (10 rows, 2 columns: label + value)\n- Tabs to organize different data views\n\nFor new diagnostics, I could implement:\n1. Additional matplotlib plots (histograms, scatter plots, radial profiles)\n2. More statistics tables with live updates\n3. Text-based log output (like simulation log viewer)\n4. Interactive plots with zoom/pan\n5. Export buttons for CSV/JSON data dumps",
+    "ambiguity": "The request doesn't specify how the diagnostic data should be presented visually.",
+    "question": "How should the new diagnostic data be displayed in the Desktop GUI?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Plots-focused",
+        "description": "Multiple matplotlib plots with subplots: velocity distribution histograms, radial profiles, orbital element scatter plots, timestep evolution. Export to PNG/PDF."
+      },
+      {
+        "key": "b",
+        "label": "Tables-focused",
+        "description": "Extend statistics tables with more rows: velocity stats, pressure stats, orbital stats (bound/unbound counts), timestep info. Export to CSV."
+      },
+      {
+        "key": "c",
+        "label": "Mixed approach",
+        "description": "Both plots and tables: key metrics in tables for quick reference, detailed distributions in plots. Most comprehensive but more screen space."
+      },
+      {
+        "key": "d",
+        "label": "Log-style output",
+        "description": "Text-based diagnostic output similar to simulation log viewer. Easy to implement, searchable, exportable, but less visual."
+      }
+    ],
+    "currentPatterns": "Energy plot: gui/data_display.py:61-188, Statistics table: gui/data_display.py:190-232"
+  },
+  {
+    "id": 3,
+    "category": "Technical Details",
+    "title": "Web GUI OpenGL/WebGL Enhancement Scope",
+    "context": "The Web GUI already uses Three.js (WebGL) for 3D rendering:\n- Current renderer: WebGLRenderer with antialiasing (web/js/visualizer.js:50-57)\n- Particle system: THREE.Points with BufferGeometry (efficient GPU rendering)\n- Colormap support: 6 built-in colormaps (viridis, plasma, inferno, hot, cool, rainbow)\n- Camera: OrbitControls with smooth damping\n- Post-processing: None currently\n- Lighting: No lights (particles are self-colored)\n- Black hole: Simple sphere with emissive material\n\nPotential 'graphical fidelity' enhancements:\n1. Post-processing effects (bloom, glow, depth of field)\n2. Advanced lighting (point lights, HDR environment maps)\n3. Particle trail/motion blur effects\n4. Accretion disc shader effects (emissive rings, temperature-based glow)\n5. Better black hole rendering (event horizon shader, gravitational lensing)\n6. Volume rendering for dense regions\n7. Improved materials (PBR, reflections)\n8. Anti-aliased lines for axes/grid",
+    "ambiguity": "Your request says 'much more graphical fidelity with OpenGL' but WebGL (OpenGL ES) is already in use. It's unclear what specific visual enhancements you want.",
+    "question": "What graphical fidelity enhancements should be added to the Web GUI?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Physically-based Black Hole",
+        "description": "Focus on black hole rendering: event horizon shader with gravitational lensing effect, accretion disc glow, Doppler shift visualization. Scientifically accurate and visually striking."
+      },
+      {
+        "key": "b",
+        "label": "Particle Effects",
+        "description": "Enhance particle rendering: motion blur trails, temperature-based bloom/glow, adaptive point sizes based on density, soft particle blending, better colormaps."
+      },
+      {
+        "key": "c",
+        "label": "Post-Processing Suite",
+        "description": "Add post-processing: bloom filter, depth of field, FXAA/SMAA antialiasing, tone mapping for HDR, vignette, film grain. Cinematic visual quality."
+      },
+      {
+        "key": "d",
+        "label": "All of the above",
+        "description": "Comprehensive overhaul: advanced black hole, particle effects, AND post-processing. Maximum visual fidelity but significant implementation time (3-5 days)."
+      },
+      {
+        "key": "e",
+        "label": "Performance over visuals",
+        "description": "Focus on optimization: GPU instancing, LOD system, frustum culling, occlusion queries. Handle 100k+ particles smoothly without sacrificing current visual quality."
+      }
+    ],
+    "currentPatterns": "Current renderer: web/js/visualizer.js:50-129, Particle system: web/js/visualizer.js:131-215"
+  },
+  {
+    "id": 4,
+    "category": "Scope & Requirements",
+    "title": "Placeholder Button Implementation Priority",
+    "context": "I found only 2 true placeholders in the Desktop GUI:\n\n1. **Preferences Dialog** (gui/main_window.py:724-727)\n   - Currently shows: 'Preferences dialog (coming soon)'\n   - Menu: Edit > Preferences\n   - Potential functionality: Configure GUI settings (theme, plot defaults, autosave intervals, performance settings)\n\n2. **Diagnostics Tab Content** (gui/data_display.py:289-296)\n   - Currently shows: 'Diagnostic information will be displayed here.'\n   - Tab in Data Display widget\n   - Covered by Question 1 above\n\nWeb GUI has no true placeholder buttons - all buttons are functional but some require backend:\n- 'Connect to Server' requires WebSocket backend (not implemented)\n- All other buttons fully work (Load Demo, Load Files, Animation controls, Export)\n\nAdditional potential implementations:\n- Desktop GUI has a 'Documentation' menu item that opens a hardcoded GitHub URL (line 732)\n- No 'Save Configuration' button in config editor (only text editing, could add Save/Load/New)\n- No 'Export Snapshot' button to save current 3D view from embedded web viewer",
+    "ambiguity": "You mentioned 'implement all the placeholder buttons' but I only found 1 true placeholder (Preferences dialog). The Diagnostics tab is a content area, not a button.",
+    "question": "Which 'placeholder' or missing functionality should be implemented for buttons?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Just Preferences Dialog",
+        "description": "Implement the Preferences dialog with settings for: theme (dark/light), plot update intervals, autosave, default config path, performance options (particle count limits, plot data caps)."
+      },
+      {
+        "key": "b",
+        "label": "Config Editor Enhancements",
+        "description": "Add Save/Load/New buttons to config editor, with file dialogs. Add 'Validate' button to check YAML before simulation. Add 'Reset to Default' button."
+      },
+      {
+        "key": "c",
+        "label": "Web Backend Integration",
+        "description": "Implement 'Connect to Server' functionality in web GUI: WebSocket server in Python backend, live data streaming from running simulation to web viewer, bidirectional communication."
+      },
+      {
+        "key": "d",
+        "label": "All missing features",
+        "description": "Implement Preferences dialog, Config editor buttons, AND Web backend server. Most comprehensive but longest implementation (2-3 days)."
+      }
+    ],
+    "currentPatterns": "Preferences placeholder: gui/main_window.py:724-727, Config editor: gui/config_editor.py:1-405"
+  },
+  {
+    "id": 5,
+    "category": "Architecture & Approach",
+    "title": "Temperature Data Bug Fix",
+    "context": "I found a potential bug in the Desktop GUI simulation thread:\n\nIn gui/simulation_thread.py:262-263:\n```python\n'mean_temperature': np.mean(self.simulation.particles.temperature) if hasattr(self.simulation.particles, 'temperature') else 0.0,\n'max_temperature': np.max(self.simulation.particles.temperature) if hasattr(self.simulation.particles, 'temperature') else 0.0\n```\n\nThe temperature IS computed in the core simulation (src/tde_sph/core/simulation.py:517 in update_thermodynamics()), but the attribute check may fail because:\n1. Temperature might not be added to ParticleSystem object\n2. Temperature might be computed but not stored as persistent attribute\n3. The hasattr check might always return False, causing temperature to show as 0.0\n\nThis could explain why temperature statistics might not display correctly in the GUI.",
+    "ambiguity": "I'm uncertain if this is actually a bug or if temperature is intentionally optional. Should I investigate and fix this?",
+    "question": "Should I fix the temperature data flow issue between simulation and GUI?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Yes, investigate and fix",
+        "description": "Debug the temperature attribute issue, ensure temperature is properly computed and stored in ParticleSystem, update GUI to reliably display temperature stats. Verify with test simulation."
+      },
+      {
+        "key": "b",
+        "label": "No, it's not a priority",
+        "description": "Focus on other diagnostics first. Temperature can be addressed later if needed."
+      },
+      {
+        "key": "c",
+        "label": "Make temperature optional but robust",
+        "description": "Keep the hasattr check but improve it: add proper fallback, log warning if temperature unavailable, add UI indicator showing which stats are available vs missing."
+      }
+    ],
+    "currentPatterns": "Temperature computation: src/tde_sph/core/simulation.py:517, GUI usage: gui/simulation_thread.py:262-263"
+  },
+  {
+    "id": 6,
+    "category": "Testing Strategy",
+    "title": "GUI Testing Approach",
+    "context": "Current testing in the project:\n- Core simulation has unit tests (src/tde_sph/tests/)\n- GUI has NO tests currently\n- No integration tests between GUI and simulation\n- No automated UI tests\n\nFor GUI changes, I could:\n1. Manual testing only (run GUI, verify visually)\n2. Add unit tests for logic (data processing, statistics computation)\n3. Add PyQt widget tests (QTest framework)\n4. Add integration tests (full simulation + GUI workflow)\n5. Add visual regression tests (screenshot comparison)",
+    "ambiguity": "The request doesn't mention testing requirements for GUI changes.",
+    "question": "What level of testing is required for the GUI changes?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Manual testing only",
+        "description": "I implement features, you test them manually. Fastest development, but no automated regression protection."
+      },
+      {
+        "key": "b",
+        "label": "Unit tests for logic",
+        "description": "Add unit tests for data processing, statistics computation, diagnostics calculations. No UI widget testing. Good balance."
+      },
+      {
+        "key": "c",
+        "label": "Full PyQt testing",
+        "description": "Unit tests + PyQt QTest for widgets, signals, UI interactions. Most thorough but adds significant time (30-50% more)."
+      },
+      {
+        "key": "d",
+        "label": "Integration tests",
+        "description": "Test full workflows: Load config > Run simulation > Verify GUI updates. Ensures end-to-end functionality."
+      }
+    ],
+    "currentPatterns": "Existing tests: src/tde_sph/tests/, No GUI tests currently"
+  },
+  {
+    "id": 7,
+    "category": "Technical Details",
+    "title": "Web GUI Data Source Priority",
+    "context": "The Web GUI currently supports 3 data sources:\n\n1. **Demo Data** (Fully functional):\n   - Generates 50 snapshots of 10,000 particles\n   - Keplerian disc + eccentric debris\n   - Works perfectly, instant load\n\n2. **Local Files** (Partial):\n   - Loads JSON files from file picker\n   - Does NOT support HDF5 (would need h5wasm library)\n   - Desktop simulation outputs HDF5, not JSON\n   - No conversion pipeline exists\n\n3. **Server Connection** (Placeholder):\n   - Button exists but no backend server\n   - Would need WebSocket server implementation\n   - Could stream live simulation data\n   - Requires Python backend work\n\nCurrent gap: Desktop GUI runs simulation → writes HDF5 → Web GUI can't read it directly",
+    "ambiguity": "To make the Web GUI truly useful with real simulation data, I need to either implement HDF5 support, add HDF5→JSON conversion, or implement server streaming. Which is the priority?",
+    "question": "How should the Web GUI receive real simulation data from the Desktop app?",
+    "options": [
+      {
+        "key": "a",
+        "label": "Add HDF5 support to Web GUI",
+        "description": "Integrate h5wasm library to load HDF5 files directly in browser. Clean solution, no conversion needed. Requires adding h5wasm dependency (~500KB)."
+      },
+      {
+        "key": "b",
+        "label": "HDF5 to JSON converter",
+        "description": "Add Python script to convert HDF5 snapshots to JSON. Desktop GUI can auto-export JSON alongside HDF5. Simple but creates duplicate data files."
+      },
+      {
+        "key": "c",
+        "label": "WebSocket live streaming",
+        "description": "Implement server backend that streams simulation data to web GUI in real-time. Most advanced, enables live monitoring, but significant implementation effort (1-2 days)."
+      },
+      {
+        "key": "d",
+        "label": "Keep demo data only for now",
+        "description": "Focus on visual enhancements using demo data. Defer real data integration until later. Fastest path to improved graphics."
+      }
+    ],
+    "currentPatterns": "Web data loader: web/js/data_loader.js:1-400, Desktop HDF5 writer: src/tde_sph/io/hdf5.py"
+  }
+]

@@ -1,0 +1,47 @@
+{
+  "timestamp": "2025-11-21T01:20:43.279Z",
+  "answers": [
+    {
+      "questionId": 1,
+      "question": "Desktop GUI Diagnostics Scope",
+      "category": "Scope & Requirements",
+      "answer": "C top priority, A second priority. The focus is on shipping a functional product"
+    },
+    {
+      "questionId": 2,
+      "question": "Diagnostic Display Format",
+      "category": "Technical Details",
+      "answer": "C - note I am using an ultrawide monitor - make the window as wide as you like. Also add a metric conversion option for dimensionless units in the GUI"
+    },
+    {
+      "questionId": 3,
+      "question": "Web GUI OpenGL/WebGL Enhancement Scope",
+      "category": "Technical Details",
+      "answer": "c - the ultimate goal is an option for volumetric lighting using the powerful RT hardware in this machine. Convert the data from a point cloud to a polygon/volumetric/etc set if necessary and take note of the data interpolation script too"
+    },
+    {
+      "questionId": 4,
+      "question": "Placeholder Button Implementation Priority",
+      "category": "Scope & Requirements",
+      "answer": "a and b, but design with c in mind for future"
+    },
+    {
+      "questionId": 5,
+      "question": "Temperature Data Bug Fix",
+      "category": "Architecture & Approach",
+      "answer": "yes investigate and when you find all the other bugs like it investigate those too"
+    },
+    {
+      "questionId": 6,
+      "question": "GUI Testing Approach",
+      "category": "Testing Strategy",
+      "answer": "b"
+    },
+    {
+      "questionId": 7,
+      "question": "Web GUI Data Source Priority",
+      "category": "Technical Details",
+      "answer": "a"
+    }
+  ]
+}

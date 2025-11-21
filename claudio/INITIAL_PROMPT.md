@@ -1,0 +1,1 @@
+Debug and fix both the GUIs and implement all the placeholder buttons. Add much more debug and diagnostic data readout utility to the desktop app. Much more graphical fidelity with OpenGL to the web app
