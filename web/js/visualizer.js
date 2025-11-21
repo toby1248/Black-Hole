@@ -471,47 +471,97 @@ class Visualizer {
     }
 
     resetCamera() {
-        this.camera.position.set(20, 20, 20);
-        this.camera.lookAt(0, 0, 0);
-        this.controls.target.set(0, 0, 0);
-        this.controls.update();
+        this.animateCameraTo(
+            { x: 20, y: 20, z: 20 },
+            { x: 0, y: 0, z: 0 }
+        );
+    }
+
+    animateCameraTo(targetPosition, targetLookAt, duration = 500) {
+        /**
+         * Smoothly animate camera to target position.
+         *
+         * Parameters:
+         *   targetPosition: {x, y, z} - target camera position
+         *   targetLookAt: {x, y, z} - target look-at point
+         *   duration: number - animation duration in ms
+         */
+        const startPosition = {
+            x: this.camera.position.x,
+            y: this.camera.position.y,
+            z: this.camera.position.z
+        };
+        const startTarget = {
+            x: this.controls.target.x,
+            y: this.controls.target.y,
+            z: this.controls.target.z
+        };
+        const startTime = performance.now();
+
+        const animate = (currentTime) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+
+            // Ease out cubic for smooth deceleration
+            const eased = 1 - Math.pow(1 - progress, 3);
+
+            // Interpolate position
+            this.camera.position.x = startPosition.x + (targetPosition.x - startPosition.x) * eased;
+            this.camera.position.y = startPosition.y + (targetPosition.y - startPosition.y) * eased;
+            this.camera.position.z = startPosition.z + (targetPosition.z - startPosition.z) * eased;
+
+            // Interpolate target
+            this.controls.target.x = startTarget.x + (targetLookAt.x - startTarget.x) * eased;
+            this.controls.target.y = startTarget.y + (targetLookAt.y - startTarget.y) * eased;
+            this.controls.target.z = startTarget.z + (targetLookAt.z - startTarget.z) * eased;
+
+            this.camera.lookAt(this.controls.target);
+            this.controls.update();
+
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            }
+        };
+
+        requestAnimationFrame(animate);
     }
 
     setTopView() {
-        if (this.positions && this.positions.length > 0) {
-            // Compute center
-            let centerX = 0, centerY = 0, centerZ = 0;
-            const N = this.positions.length / 3;
-            for (let i = 0; i < this.positions.length; i += 3) {
-                centerX += this.positions[i] / N;
-                centerY += this.positions[i+1] / N;
-                centerZ += this.positions[i+2] / N;
-            }
-
-            const distance = 30;
-            this.camera.position.set(centerX, centerY, centerZ + distance);
-            this.camera.lookAt(centerX, centerY, centerZ);
-            this.controls.target.set(centerX, centerY, centerZ);
-            this.controls.update();
-        }
+        const center = this._computeCenter();
+        const distance = 30;
+        this.animateCameraTo(
+            { x: center.x, y: center.y, z: center.z + distance },
+            center
+        );
     }
 
     setSideView() {
-        if (this.positions && this.positions.length > 0) {
-            let centerX = 0, centerY = 0, centerZ = 0;
-            const N = this.positions.length / 3;
-            for (let i = 0; i < this.positions.length; i += 3) {
-                centerX += this.positions[i] / N;
-                centerY += this.positions[i+1] / N;
-                centerZ += this.positions[i+2] / N;
-            }
+        const center = this._computeCenter();
+        const distance = 30;
+        this.animateCameraTo(
+            { x: center.x + distance, y: center.y, z: center.z },
+            center
+        );
+    }
 
-            const distance = 30;
-            this.camera.position.set(centerX + distance, centerY, centerZ);
-            this.camera.lookAt(centerX, centerY, centerZ);
-            this.controls.target.set(centerX, centerY, centerZ);
-            this.controls.update();
+    _computeCenter() {
+        /**
+         * Compute center of particle cloud.
+         * Returns: {x, y, z} center coordinates
+         */
+        if (!this.positions || this.positions.length === 0) {
+            return { x: 0, y: 0, z: 0 };
         }
+
+        let centerX = 0, centerY = 0, centerZ = 0;
+        const N = this.positions.length / 3;
+        for (let i = 0; i < this.positions.length; i += 3) {
+            centerX += this.positions[i] / N;
+            centerY += this.positions[i+1] / N;
+            centerZ += this.positions[i+2] / N;
+        }
+
+        return { x: centerX, y: centerY, z: centerZ };
     }
 
     screenshot() {
