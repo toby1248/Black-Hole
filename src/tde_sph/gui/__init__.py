@@ -58,6 +58,7 @@ if HAS_PYQT:
     )
     from tde_sph.gui.simulation_thread import SimulationThread
     from tde_sph.gui.preferences_dialog import PreferencesDialog, get_preference, set_preference
+    from tde_sph.gui.web_viewer import WebViewerWidget, create_web_viewer, HAS_WEB_ENGINE
 else:
     # Provide placeholders if PyQt not available
     TDESPHMainWindow = None
@@ -72,10 +73,13 @@ else:
     CoordinateMetricWidget = None
     SimulationThread = None
     PreferencesDialog = None
+    WebViewerWidget = None
     YAMLSyntaxHighlighter = None
     launch_gui = None
     get_preference = None
     set_preference = None
+    create_web_viewer = None
+    HAS_WEB_ENGINE = False
 
 __all__ = [
     'TDESPHMainWindow',
@@ -90,10 +94,13 @@ __all__ = [
     'CoordinateMetricWidget',
     'SimulationThread',
     'PreferencesDialog',
+    'WebViewerWidget',
+    'create_web_viewer',
     'YAMLSyntaxHighlighter',
     'launch_gui',
     'get_preference',
     'set_preference',
     'HAS_PYQT',
     'HAS_PYQT6',
+    'HAS_WEB_ENGINE',
 ]
