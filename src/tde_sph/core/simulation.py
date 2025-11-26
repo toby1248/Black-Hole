@@ -11,7 +11,7 @@ Design:
 - Supports both Newtonian and GR modes via configuration
 """
 
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional
 from dataclasses import dataclass, field
 import warnings
 import numpy as np
@@ -31,6 +31,7 @@ from tde_sph.sph import (
     ParticleSystem,
     CubicSplineKernel,
     find_neighbours_bruteforce,
+    find_neighbours_octree,
     compute_density_summation,
     update_smoothing_lengths,
     compute_hydro_acceleration,
@@ -40,7 +41,6 @@ try:
     from tde_sph.gpu import (
         HAS_CUDA,
         GPUManager,
-        compute_gravity_bruteforce_gpu,
         compute_density_gpu,
         compute_hydro_gpu,
         update_smoothing_lengths_gpu
@@ -88,12 +88,27 @@ class SimulationConfig(BaseModel):
     t_start: float = Field(default=0.0, ge=0.0, description="Start time")
     t_end: float = Field(default=10.0, gt=0.0, description="End time")
     dt_initial: float = Field(default=0.001, gt=0.0, description="Initial timestep")
-    cfl_factor: float = Field(default=0.3, gt=0.0, le=1.0, description="CFL safety factor")
+    dt_min: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Absolute minimum allowable timestep"
+    )
+    dt_max: Optional[float] = Field(
+        default=None,
+        gt=0.0,
+        description="Absolute maximum allowable timestep"
+    )
+    dt_change_limit: float = Field(
+        default=4.0,
+        ge=1.0,
+        description="Maximum factor by which dt may change between consecutive steps"
+    )
+    cfl_factor: float = Field(default=1.0, gt=0.0, le=1.0, description="CFL safety factor")
 
     # I/O
     output_dir: str = Field(default="outputs/default_run", description="Output directory path")
-    snapshot_interval: float = Field(default=0.1, gt=0.0, description="Snapshot output interval")
-    log_interval: float = Field(default=0.01, gt=0.0, description="Log output interval")
+    snapshot_interval: float = Field(default=0.01, gt=0.0, description="Snapshot output interval")
+    log_interval: float = Field(default=0.001, gt=0.0, description="Log output interval")
 
     # Physics mode (TASK-015)
     mode: str = Field(
@@ -139,7 +154,7 @@ class SimulationConfig(BaseModel):
         description="Stricter CFL factor for GR mode"
     )
     orbital_timestep_factor: float = Field(
-        default=0.05,
+        default=0.02,
         gt=0.0,
         le=1.0,
         description="Timestep as fraction of orbital period"
@@ -287,6 +302,24 @@ class SimulationConfig(BaseModel):
         if self.t_end <= self.t_start:
             raise ValueError(f"t_end ({self.t_end}) must be greater than t_start ({self.t_start})")
 
+        # Timestep bounds and limits
+        if self.dt_min is None:
+            default_min = max(self.dt_initial * 1e-2, 1e-12)
+            object.__setattr__(self, 'dt_min', default_min)
+        if self.dt_max is None:
+            object.__setattr__(self, 'dt_max', self.dt_initial * 1e2)
+
+        if self.dt_max <= self.dt_min:
+            raise ValueError(
+                f"dt_max ({self.dt_max}) must be greater than dt_min ({self.dt_min})"
+            )
+
+        if not (self.dt_min <= self.dt_initial <= self.dt_max):
+            raise ValueError(
+                "dt_initial must lie within [dt_min, dt_max]; "
+                f"got dt_initial={self.dt_initial}, dt_min={self.dt_min}, dt_max={self.dt_max}"
+            )
+
         return self
 
 
@@ -305,6 +338,27 @@ class SimulationState:
     internal_energy: float = 0.0
     total_energy: float = 0.0
     initial_energy: Optional[float] = None
+    last_dt_candidate: float = 0.0
+    last_dt_limiter: str = "none"
+
+    # Timing diagnostics
+    timing_gravity: float = 0.0
+    timing_sph_density: float = 0.0
+    timing_smoothing_lengths: float = 0.0  # Adaptive h updates
+    timing_sph_pressure: float = 0.0
+    timing_integration: float = 0.0
+    timing_energy_computation: float = 0.0  # Renamed from timing_diagnostics
+    timing_timestep_estimation: float = 0.0  # Averaged over steps between UI updates
+    timing_thermodynamics: float = 0.0  # EOS updates (P, cs, T)
+    timing_gpu_transfer: float = 0.0  # CPU<->GPU data movement
+    timing_compute_forces: float = 0.0  # Total time for compute_forces()
+    timing_io: float = 0.0
+    timing_other: float = 0.0  # Remaining overhead
+    timing_total: float = 0.0
+    
+    # Timing accumulation for averaging
+    _timestep_est_accumulator: float = 0.0  # Sum of timestep estimation timings
+    _timestep_est_count: int = 0  # Number of steps accumulated
 
     # Timing
     wall_time_start: float = field(default_factory=time_module.time)
@@ -361,6 +415,7 @@ class Simulation:
         config: Optional[SimulationConfig] = None,
         metric: Optional[Metric] = None,
         radiation_model: Optional[RadiationModel] = None,
+        use_gpu: Optional[bool] = None,
     ):
         """
         Initialize simulation.
@@ -381,6 +436,8 @@ class Simulation:
             Spacetime metric (required for GR mode).
         radiation_model : Optional[RadiationModel]
             Radiation/cooling model (optional).
+        use_gpu : Optional[bool], default None
+            Whether to use GPU acceleration if available. If None, defaults to True when CUDA is detected.
         """
         self.particles = particles
         self.gravity_solver = gravity_solver
@@ -391,6 +448,20 @@ class Simulation:
 
         self.config = config or SimulationConfig()
         self.state = SimulationState()
+
+        # Ensure derived diagnostics start from consistent state
+        self._update_velocity_magnitude()
+
+        # Initialize adaptive smoothing length manager for performance
+        from ..sph.smoothing_adaptive import AdaptiveSmoothingManager
+        self.smoothing_manager = AdaptiveSmoothingManager(
+            eta=1.2,
+            update_interval=10,  # Update every 10 steps
+            density_change_threshold=0.2  # Update if density changes >20%
+        )
+
+        # Ensure gravity solver is aware of configured BH parameters if supported
+        self._configure_gravity_solver()
 
         # Set random seed for reproducibility
         if self.config.random_seed is not None:
@@ -406,20 +477,31 @@ class Simulation:
         # Validate configuration
         self._validate_config()
 
+        # Ensure smoothing lengths are self-consistent before first snapshot
+        if self.particles.n_particles > 0:
+            self._initialize_smoothing_lengths()
+
         # Initialize state
         self.state.time = self.config.t_start
         self.state.dt = self.config.dt_initial
 
-        # GPU Setup
-        self.use_gpu = HAS_CUDA
+        # GPU Setup - Default to enabled when CUDA is detected
+        if use_gpu is None:
+            use_gpu = HAS_CUDA  # Auto-detect: enable GPU by default when CUDA available
+        
+        self.use_gpu = use_gpu and HAS_CUDA
         self.gpu_manager = None
         if self.use_gpu:
             try:
                 self.gpu_manager = GPUManager(self.particles)
-                self._log("GPU acceleration enabled (CUDA)")
+                self._log("GPU acceleration enabled (CUDA detected and initialized)")
             except Exception as e:
                 self._log(f"GPU initialization failed: {e}")
                 self.use_gpu = False
+        elif HAS_CUDA and not use_gpu:
+            self._log("CUDA detected but GPU acceleration explicitly disabled")
+        elif not HAS_CUDA:
+            self._log("GPU acceleration unavailable (CUDA not detected)")
 
         # Log initialization
         if self.config.verbose:
@@ -433,6 +515,141 @@ class Simulation:
                 self._log(f"  Hamiltonian integrator: {self.config.use_hamiltonian_integrator}")
                 if self.config.use_hamiltonian_integrator:
                     self._log(f"  ISCO threshold: {self.config.isco_radius_threshold} M")
+
+    def _configure_gravity_solver(self) -> None:
+        """Synchronize config metadata (e.g., BH mass) with gravity solver."""
+        if not hasattr(self, 'gravity_solver'):
+            return
+
+        solver = self.gravity_solver
+        target_mass = float(getattr(self.config, 'bh_mass', 0.0))
+
+        if hasattr(solver, 'bh_mass'):
+            solver_mass = float(getattr(solver, 'bh_mass', 0.0))
+            if not np.isclose(solver_mass, target_mass):
+                setattr(solver, 'bh_mass', np.float32(target_mass))
+                if getattr(self.config, 'verbose', False):
+                    self._log(
+                        "Gravity solver bh_mass updated to match config: "
+                        f"{target_mass:.3e}"
+                    )
+
+    def _initialize_smoothing_lengths(self) -> None:
+        """
+        Fast initial smoothing-length solve using GPU or octree when available.
+
+        Falls back to the legacy O(N^2) routine only for modest particle counts
+        to avoid prohibitive startup times at N ≥ 1e5.
+        """
+        n_particles = self.particles.n_particles
+        if n_particles == 0:
+            return
+
+        # Prefer GPU path (O(N) with cached neighbour counts)
+        if self.use_gpu and 'update_smoothing_lengths_gpu' in globals():
+            try:
+                self.particles.smoothing_lengths = update_smoothing_lengths_gpu(
+                    self.particles.positions,
+                    self.particles.smoothing_lengths
+                ).astype(np.float32)
+                if self.config.verbose:
+                    h0 = self.particles.smoothing_lengths
+                    self._log(
+                        "Initial smoothing-lengths (GPU): "
+                        f"[{float(np.min(h0)):.3e}, {float(np.max(h0)):.3e}]"
+                    )
+                return
+            except Exception as exc:  # pragma: no cover - defensive
+                if self.config.verbose:
+                    self._log(f"GPU smoothing-length init failed; falling back: {exc}")
+
+        # Octree-based path for moderate N (avoids O(N^2) brute force)
+        if self.config.neighbour_search_method == "tree" and n_particles <= 200_000:
+            try:
+                from ..gravity.barnes_hut import BarnesHutGravity
+
+                theta = getattr(self.gravity_solver, 'theta', 0.5)
+                bh_solver = BarnesHutGravity(theta=theta)
+                # Build tree once (compute_acceleration populates tree_data)
+                bh_solver.compute_acceleration(
+                    self.particles.positions.astype(np.float32),
+                    self.particles.masses.astype(np.float32),
+                    self.particles.smoothing_lengths.astype(np.float32),
+                    metric=None
+                )
+                tree_data = bh_solver.get_tree_data()
+                if tree_data is not None:
+                    h_new = self._smoothing_from_tree(
+                        self.particles.positions,
+                        self.particles.masses,
+                        self.particles.smoothing_lengths,
+                        tree_data
+                    )
+                    self.particles.smoothing_lengths = h_new
+                    if self.config.verbose:
+                        self._log(
+                            "Initial smoothing-lengths (TreeSPH): "
+                            f"[{float(np.min(h_new)):.3e}, {float(np.max(h_new)):.3e}]"
+                        )
+                    return
+            except Exception as exc:  # pragma: no cover - defensive
+                if self.config.verbose:
+                    self._log(f"Tree-based smoothing init failed; fallback: {exc}")
+
+        # Legacy brute-force only for smaller systems (avoid runaway O(N^2))
+        if n_particles <= 50_000:
+            self.particles.smoothing_lengths = update_smoothing_lengths(
+                self.particles.positions,
+                self.particles.masses,
+                self.particles.smoothing_lengths
+            )
+            if self.config.verbose:
+                h0 = self.particles.smoothing_lengths
+                self._log(
+                    "Initial smoothing-length range: "
+                    f"[{float(np.min(h0)):.3e}, {float(np.max(h0)):.3e}]"
+                )
+        else:
+            # Keep provided h to avoid O(N^2) startup; downstream adaptive manager will refine.
+            if self.config.verbose:
+                h0 = self.particles.smoothing_lengths
+                self._log(
+                    "Skipping costly initial smoothing-length solve "
+                    f"(N={n_particles:,}); using provided h range "
+                    f"[{float(np.min(h0)):.3e}, {float(np.max(h0)):.3e}]"
+                )
+
+    def _smoothing_from_tree(
+        self,
+        positions: NDArrayFloat,
+        masses: NDArrayFloat,
+        h_initial: NDArrayFloat,
+        tree_data: Dict[str, np.ndarray],
+        target_neighbours: int = 50,
+        max_iterations: int = 3,
+        tolerance: float = 0.05,
+    ) -> NDArrayFloat:
+        """Iteratively adjust h using octree neighbour counts (O(N log N))."""
+        h_new = np.asarray(h_initial, dtype=np.float32).copy()
+        if tree_data is None:
+            return h_new
+
+        for _ in range(max_iterations):
+            neighbour_lists, _ = find_neighbours_octree(
+                positions.astype(np.float32),
+                h_new,
+                tree_data
+            )
+            counts = np.array([len(nb) for nb in neighbour_lists], dtype=np.float32)
+            counts = np.maximum(counts, 1.0)
+            ratio = counts / float(target_neighbours)
+            h_new *= np.power(ratio, -1.0 / 3.0, dtype=np.float32)
+
+            frac_err = np.max(np.abs(counts - target_neighbours) / target_neighbours)
+            if frac_err < tolerance:
+                break
+
+        return h_new.astype(np.float32)
 
     def _validate_config(self):
         """
@@ -470,6 +687,9 @@ class Simulation:
         Compute kinetic, potential, internal, and total energies.
 
         Implements REQ-009: energy accounting.
+        
+        Uses O(N log N) Barnes-Hut tree for potential energy calculation when available,
+        falling back to direct O(N²) summation from gravity solver otherwise.
 
         Returns
         -------
@@ -480,12 +700,36 @@ class Simulation:
         v_mag_sq = np.sum(self.particles.velocities**2, axis=1)
         E_kin = 0.5 * np.sum(self.particles.masses * v_mag_sq)
 
-        # Potential energy from gravity solver
-        phi = self.gravity_solver.compute_potential(
-            self.particles.positions,
-            self.particles.masses,
-            self.particles.smoothing_lengths
-        )
+        # Potential energy - Use Barnes-Hut O(N log N) if available for performance
+        try:
+            from ..gravity.barnes_hut import BarnesHutGravity
+            
+            # Check if we can use Barnes-Hut (either current solver is BH or we can create one)
+            if isinstance(self.gravity_solver, BarnesHutGravity):
+                # Use existing Barnes-Hut solver
+                phi = self.gravity_solver.compute_potential(
+                    self.particles.positions,
+                    self.particles.masses,
+                    self.particles.smoothing_lengths
+                )
+            else:
+                # Create temporary Barnes-Hut solver for energy calculation only
+                # Use same G as current gravity solver
+                G = getattr(self.gravity_solver, 'G', 1.0)
+                bh_solver = BarnesHutGravity(G=G, theta=0.5)
+                phi = bh_solver.compute_potential(
+                    self.particles.positions,
+                    self.particles.masses,
+                    self.particles.smoothing_lengths
+                )
+        except (ImportError, Exception):
+            # Fallback to direct summation from current gravity solver
+            phi = self.gravity_solver.compute_potential(
+                self.particles.positions,
+                self.particles.masses,
+                self.particles.smoothing_lengths
+            )
+        
         E_pot = 0.5 * np.sum(self.particles.masses * phi)  # Factor of 1/2 to avoid double-counting
 
         # Internal (thermal) energy: Σ m_i u_i
@@ -505,22 +749,99 @@ class Simulation:
         """
         Update thermodynamic quantities (pressure, sound speed, temperature) from EOS.
         """
+        # Apply density floor to prevent issues
+        density_safe = np.maximum(self.particles.density, 1e-20)
+        
         self.particles.pressure = self.eos.pressure(
-            self.particles.density,
+            density_safe,
             self.particles.internal_energy
         )
+        # Ensure pressure is non-negative
+        self.particles.pressure = np.maximum(self.particles.pressure, 0.0)
+        
         self.particles.sound_speed = self.eos.sound_speed(
-            self.particles.density,
+            density_safe,
             self.particles.internal_energy
         )
-        # Temperature is optional but useful for diagnostics
+        # Apply sound speed floor to prevent zero/NaN
+        self.particles.sound_speed = np.maximum(self.particles.sound_speed, 1e-6)
+        
+        # Check for NaN in sound speed (shouldn't happen with floors, but be safe)
+        if not np.all(np.isfinite(self.particles.sound_speed)):
+            nan_count = np.sum(~np.isfinite(self.particles.sound_speed))
+            self._log(f"WARNING: {nan_count} NaN sound speeds detected, replacing with minimum")
+            self.particles.sound_speed = np.where(
+                np.isfinite(self.particles.sound_speed),
+                self.particles.sound_speed,
+                1e-6
+            )
+        
+        # Temperature is tracked for diagnostics and I/O (T.1)
         temperature = self.eos.temperature(
-            self.particles.density,
+            density_safe,
             self.particles.internal_energy
         )
-        # Store in particles if it has a temperature attribute
-        if hasattr(self.particles, 'temperature'):
-            self.particles.temperature = temperature
+        self.particles.temperature = temperature
+
+    def _compute_radiation_du_dt(self) -> Optional[NDArrayFloat]:
+        """
+        Compute radiative cooling/heating rate du/dt using attached radiation model.
+        """
+        if self.radiation_model is None:
+            return None
+
+        try:
+            rho = np.asarray(self.particles.density, dtype=np.float32)
+            T = np.asarray(self.particles.temperature, dtype=np.float32)
+            u = np.asarray(self.particles.internal_energy, dtype=np.float32)
+            m = np.asarray(self.particles.masses, dtype=np.float32)
+            h = np.asarray(self.particles.smoothing_lengths, dtype=np.float32)
+
+            rad = self.radiation_model
+
+            if hasattr(rad, "compute_net_rates"):
+                rates = rad.compute_net_rates(
+                    density=rho,
+                    temperature=T,
+                    internal_energy=u,
+                    masses=m,
+                    smoothing_lengths=h,
+                )
+                return np.asarray(rates.du_dt_net, dtype=np.float32)
+
+            if hasattr(rad, "compute_cooling_rate"):
+                return np.asarray(
+                    rad.compute_cooling_rate(
+                        density=rho,
+                        temperature=T,
+                        internal_energy=u,
+                        masses=m,
+                        smoothing_lengths=h,
+                    ),
+                    dtype=np.float32,
+                )
+
+            if hasattr(rad, "cooling_rate"):
+                return np.asarray(
+                    rad.cooling_rate(
+                        density=rho,
+                        temperature=T,
+                        internal_energy=u,
+                        masses=m,
+                        smoothing_lengths=h,
+                    ),
+                    dtype=np.float32,
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            if self.config.verbose:
+                self._log(f"Radiation cooling failed, ignoring this step: {exc}")
+
+        return None
+
+    def _update_velocity_magnitude(self) -> None:
+        """Cache |v| for diagnostics and snapshot output."""
+        velocities = np.asarray(self.particles.velocities, dtype=np.float32)
+        self.particles.velocity_magnitude = np.linalg.norm(velocities, axis=1).astype(np.float32)
 
     def compute_forces(self) -> Dict[str, NDArrayFloat]:
         """
@@ -531,16 +852,71 @@ class Simulation:
         forces : Dict[str, NDArrayFloat]
             Dictionary with 'gravity', 'hydro', 'total' accelerations (N, 3).
         """
+        t0_forces_total = time_module.time()
+        
         if self.use_gpu:
-            return self._compute_forces_gpu()
+            result = self._compute_forces_gpu()
+            self.state.timing_compute_forces = time_module.time() - t0_forces_total
+            return result
 
-        # 1. Find neighbours and compute densities
-        neighbour_lists, _ = find_neighbours_bruteforce(
-            self.particles.positions,
-            self.particles.smoothing_lengths
-        )
+        # 1. Gravity (computed first to build octree for TreeSPH)
+        t0_grav = time_module.time()
+        # Only pass velocities for GR mode (geodesic acceleration)
+        if self.config.mode == "GR":
+            a_grav = self.gravity_solver.compute_acceleration(
+                self.particles.positions,
+                self.particles.masses,
+                self.particles.smoothing_lengths,
+                metric=self.metric,
+                velocities=self.particles.velocities
+            )
+        else:
+            a_grav = self.gravity_solver.compute_acceleration(
+                self.particles.positions,
+                self.particles.masses,
+                self.particles.smoothing_lengths,
+                metric=self.metric
+            )
+        self.state.timing_gravity = time_module.time() - t0_grav
 
-        # Update densities
+        # 2. Find neighbours - use TreeSPH if octree is available
+        t0_density = time_module.time()
+        
+        # Check if we can use octree neighbour search (TreeSPH approach)
+        tree_data = None
+        try:
+            from ..gravity.barnes_hut import BarnesHutGravity
+            from ..gravity.barnes_hut_gpu import BarnesHutGravityGPU
+            if isinstance(self.gravity_solver, (BarnesHutGravity, BarnesHutGravityGPU)):
+                tree_data = self.gravity_solver.get_tree_data()
+        except ImportError:
+            pass
+        
+        if tree_data is not None and tree_data.get('gpu', False):
+            # Use GPU octree neighbour search (10x+ speedup)
+            from ..sph.neighbours_gpu import find_neighbours_octree_gpu_integrated
+            neighbour_lists, _ = find_neighbours_octree_gpu_integrated(
+                self.particles.positions,
+                self.particles.smoothing_lengths,
+                tree_data,
+                support_radius=2.0,
+                max_neighbours=64
+            )
+        elif tree_data is not None:
+            # Use CPU octree neighbour search
+            neighbour_lists, _ = find_neighbours_octree(
+                self.particles.positions,
+                self.particles.smoothing_lengths,
+                tree_data
+            )
+        else:
+            # Fall back to O(N^2) brute force
+            neighbour_lists, _ = find_neighbours_bruteforce(
+                self.particles.positions,
+                self.particles.smoothing_lengths
+            )
+
+        # 3. Update densities using the latest neighbour topology
         self.particles.density = compute_density_summation(
             self.particles.positions,
             self.particles.masses,
@@ -548,26 +924,36 @@ class Simulation:
             neighbour_lists,
             kernel_func=self.kernel.kernel
         )
+        self.state.timing_sph_density = time_module.time() - t0_density
 
-        # Update smoothing lengths (adaptive h)
-        self.particles.smoothing_lengths = update_smoothing_lengths(
-            self.particles.positions,
+        # 4. Adaptive smoothing length update (uses density, very fast O(N))
+        t0_h = time_module.time()
+        h_new, did_update = self.smoothing_manager.update(
             self.particles.masses,
-            self.particles.smoothing_lengths
-        )
-
-        # 2. Update thermodynamics (P, c_s from EOS)
-        self.update_thermodynamics()
-
-        # 3. Gravity
-        a_grav = self.gravity_solver.compute_acceleration(
-            self.particles.positions,
-            self.particles.masses,
+            self.particles.density,
             self.particles.smoothing_lengths,
-            metric=self.metric  # None for Newtonian
+            self.state.step
         )
+        self.particles.smoothing_lengths = h_new
+        self.state.timing_smoothing_lengths = time_module.time() - t0_h
 
-        # 4. SPH hydrodynamics
+        if self.config.verbose and did_update:
+            h_vals = self.particles.smoothing_lengths
+            h_min = float(np.min(h_vals))
+            h_max = float(np.max(h_vals))
+            near_floor = int(np.count_nonzero(h_vals <= 1e-5))
+            self._log(
+                "Adaptive h updated -> range: "
+                f"[{h_min:.3e}, {h_max:.3e}] (<=1e-5: {near_floor})"
+            )
+
+        # 5. Update thermodynamics (P, c_s from EOS)
+        t0_thermo = time_module.time()
+        self.update_thermodynamics()
+        self.state.timing_thermodynamics = time_module.time() - t0_thermo
+
+        # 6. SPH hydrodynamics
+        t0_pressure = time_module.time()
         a_hydro, du_dt_hydro = compute_hydro_acceleration(
             self.particles.positions,
             self.particles.velocities,
@@ -581,145 +967,428 @@ class Simulation:
             alpha=self.config.artificial_viscosity_alpha,
             beta=self.config.artificial_viscosity_beta,
         )
+        self.state.timing_sph_pressure = time_module.time() - t0_pressure
+
+        # Radiation cooling/heating (additive to hydro du/dt)
+        du_dt_total = du_dt_hydro
+        if self.radiation_model is not None:
+            du_dt_rad = self._compute_radiation_du_dt()
+            if du_dt_rad is not None:
+                du_dt_total = du_dt_hydro + du_dt_rad
 
         # Total acceleration
         a_total = a_grav + a_hydro
+        if not np.all(np.isfinite(a_total)):
+            self._log("ERROR: Accelerations contain NaN or inf")
+            raise ValueError("Invalid accelerations")
+        
+        # Total compute_forces time
+        self.state.timing_compute_forces = time_module.time() - t0_forces_total
 
         return {
             'gravity': a_grav,
             'hydro': a_hydro,
             'total': a_total,
-            'du_dt': du_dt_hydro,  # For energy update
+            'du_dt': du_dt_total,  # For energy update
         }
 
     def _compute_forces_gpu(self) -> Dict[str, NDArrayFloat]:
-        """Compute forces using GPU acceleration."""
-        # Sync CPU -> GPU
-        self.gpu_manager.sync_to_device(self.particles)
-        
-        # 1. Update smoothing lengths (Adaptive)
-        # This updates h on GPU
-        self.gpu_manager.h = update_smoothing_lengths_gpu(
-            self.gpu_manager.pos,
-            self.gpu_manager.h,
-            target_neighbours=50,
-            tolerance=0.05,
-            max_iter=50
-        )
-        
-        # 2. Compute Density
-        # Reset density
-        self.gpu_manager.rho.fill(0.0)
-        compute_density_gpu(
-            self.gpu_manager.pos,
-            self.gpu_manager.mass,
-            self.gpu_manager.h,
-            self.gpu_manager.rho
-        )
-        
-        # 3. Update Thermodynamics (EOS)
-        # Sync density back
-        self.particles.density = self.gpu_manager.rho.get() # .get() is cupy to numpy
-        
-        # Update EOS on CPU
-        self.update_thermodynamics()
-        
-        # Sync P, cs back to GPU
+        """Compute forces using GPU acceleration with TreeSPH (octree-based neighbours)."""
         import cupy as cp
-        self.gpu_manager.pressure = cp.asarray(self.particles.pressure)
-        self.gpu_manager.cs = cp.asarray(self.particles.sound_speed)
+        from tde_sph.gpu import compute_density_treesph, compute_hydro_treesph
         
-        # 4. Gravity
-        self.gpu_manager.acc_grav.fill(0.0)
+        # Only update positions and velocities if they changed
+        # (don't re-transfer data that's already on GPU)
+        if not hasattr(self.gpu_manager, 'data_on_gpu') or not self.gpu_manager.data_on_gpu:
+            t0_transfer = time_module.time()
+            self.gpu_manager.sync_to_device(self.particles)
+            self.state.timing_gpu_transfer = time_module.time() - t0_transfer
+        else:
+            # Just update what changed from CPU side (if anything)
+            t0_transfer = time_module.time()
+            # Typically only positions and velocities change
+            self.gpu_manager.update_from_cpu(self.particles, fields=['positions', 'velocities'])
+            self.state.timing_gpu_transfer = time_module.time() - t0_transfer
+        
+        # 1. Build/reuse octree for gravity and neighbour search
+        theta = self.config.__dict__.get('barnes_hut_theta', 0.5)
+        if hasattr(self.gravity_solver, 'theta'):
+            theta = self.gravity_solver.theta
+        self.gpu_manager.build_octree(theta=theta)  # Smart rebuilding - only when needed
+        
+        # 2. Compute neighbour lists ONCE (reused for both density and hydro)
+        support_radius = 2.0  # Standard SPH support radius
+        max_neighbours = 64
+        neighbour_lists, neighbour_counts = self.gpu_manager.compute_neighbours(
+            support_radius=support_radius,
+            max_neighbours=max_neighbours
+        )
+        neighbour_lists_host = None
+        if compute_density_treesph is None:
+            neighbour_lists_host, _ = self.gpu_manager.get_neighbour_lists_host()
+            if neighbour_lists_host is None:
+                raise RuntimeError("GPU neighbour lists not available for CPU fallback")
+
+        # 4. Compute Density using TreeSPH (octree neighbours)
+        t0_density = time_module.time()
+        if compute_density_treesph is not None:
+            self.gpu_manager.rho = compute_density_treesph(
+                self.gpu_manager.pos,
+                self.gpu_manager.mass,
+                self.gpu_manager.h,
+                neighbour_lists,
+                neighbour_counts
+            )
+            t0_transfer = time_module.time()
+            density_cpu = cp.asnumpy(self.gpu_manager.rho)
+            self.state.timing_gpu_transfer += time_module.time() - t0_transfer
+        else:
+            density_cpu = compute_density_summation(
+                self.particles.positions,
+                self.particles.masses,
+                self.particles.smoothing_lengths,
+                neighbour_lists_host,
+                kernel_func=self.kernel.kernel
+            )
+
+            t0_transfer = time_module.time()
+            self.gpu_manager.rho = cp.asarray(density_cpu, dtype=cp.float32)
+            self.state.timing_gpu_transfer += time_module.time() - t0_transfer
+
+        self.particles.density = density_cpu
+        self.state.timing_sph_density = time_module.time() - t0_density
+        density_cpu = self.particles.density
+
+        # 4b. Adaptive smoothing length update (reuse CPU smoothing manager)
+        t0_h = time_module.time()
+        h_new, did_update = self.smoothing_manager.update(
+            self.particles.masses,
+            self.particles.density,
+            self.particles.smoothing_lengths,
+            self.state.step
+        )
+        self.particles.smoothing_lengths = h_new
+        self.state.timing_smoothing_lengths = time_module.time() - t0_h
+
+        if did_update:
+            t0_transfer = time_module.time()
+            self.gpu_manager.h = cp.asarray(h_new, dtype=cp.float32)
+            self.gpu_manager.invalidate_neighbours()
+            self.state.timing_gpu_transfer += time_module.time() - t0_transfer
+
+            if self.config.verbose:
+                h_vals = self.particles.smoothing_lengths
+                h_min = float(np.min(h_vals))
+                h_max = float(np.max(h_vals))
+                near_floor = int(np.count_nonzero(h_vals <= 1e-5))
+                self._log(
+                    "Adaptive h updated -> range: "
+                    f"[{h_min:.3e}, {h_max:.3e}] (<=1e-5: {near_floor})"
+                )
+        
+        t0_thermo = time_module.time()
+        self.update_thermodynamics()
+        self.state.timing_thermodynamics = time_module.time() - t0_thermo
+        
+        # Transfer P, cs back to GPU
+        t0_transfer = time_module.time()
+        self.gpu_manager.pressure = cp.asarray(self.particles.pressure, dtype=cp.float32)
+        self.gpu_manager.cs = cp.asarray(self.particles.sound_speed, dtype=cp.float32)
+        self.state.timing_gpu_transfer += time_module.time() - t0_transfer
+        
+        # 6. Compute Gravity using Barnes-Hut octree
+        t0_grav = time_module.time()
         G = 1.0
         if hasattr(self.gravity_solver, 'G'):
             G = float(self.gravity_solver.G)
+        
+        epsilon = 0.1  # Softening parameter
+        if hasattr(self.gravity_solver, 'epsilon'):
+            epsilon = float(self.gravity_solver.epsilon)
             
-        compute_gravity_bruteforce_gpu(
+        # Use octree for self-gravity calculation (particle-particle)
+        octree = self.gpu_manager.get_octree()
+        forces_gpu = octree.compute_gravity(
             self.gpu_manager.pos,
             self.gpu_manager.mass,
             self.gpu_manager.h,
-            self.gpu_manager.acc_grav,
-            G
+            G=G,
+            epsilon=epsilon
         )
         
-        # 5. Hydro
-        self.gpu_manager.acc_hydro.fill(0.0)
-        self.gpu_manager.du_dt.fill(0.0)
+        # Convert forces to accelerations (a = F/m)
+        self.gpu_manager.acc_grav = forces_gpu / self.gpu_manager.mass[:, cp.newaxis]
         
-        compute_hydro_gpu(
-            self.gpu_manager.pos,
-            self.gpu_manager.vel,
-            self.gpu_manager.mass,
-            self.gpu_manager.h,
-            self.gpu_manager.rho,
-            self.gpu_manager.pressure,
-            self.gpu_manager.cs,
-            self.gpu_manager.acc_hydro,
-            self.gpu_manager.du_dt,
-            self.config.artificial_viscosity_alpha,
-            self.config.artificial_viscosity_beta
-        )
+        # Add black hole gravity (GR or Newtonian)
+        if self.metric is not None:
+            # GR mode: Use geodesic acceleration from metric
+            # Transfer positions and velocities to CPU for BH gravity computation
+            pos_cpu = cp.asnumpy(self.gpu_manager.pos)
+            vel_cpu = cp.asnumpy(self.gpu_manager.vel)
+            
+            # Compute BH geodesic acceleration using metric
+            # Note: geodesic_acceleration expects Cartesian 3-velocity, not 4-velocity
+            a_bh = self.metric.geodesic_acceleration(
+                pos_cpu.astype(np.float64),
+                vel_cpu.astype(np.float64)
+            )
+            
+            # Add adaptive softening near BH to prevent extreme accelerations
+            r_bh = np.linalg.norm(pos_cpu, axis=1)
+            bh_softening = np.maximum(epsilon, 0.01 * r_bh)  # Adaptive softening
+            a_bh_magnitude = np.linalg.norm(a_bh, axis=1, keepdims=True)
+            a_bh_max = 1e6  # Cap extreme accelerations
+            a_bh_scale = np.minimum(a_bh_max / (a_bh_magnitude + 1e-10), 1.0)
+            a_bh *= a_bh_scale
+            
+            # Add to total gravity acceleration on GPU
+            self.gpu_manager.acc_grav += cp.asarray(a_bh.astype(np.float32))
+        else:
+            # Newtonian mode: Use simple point-mass gravity a = -G M_BH r / r³
+            # Get BH mass and G from gravity solver
+            bh_mass = getattr(self.gravity_solver, 'bh_mass', self.config.bh_mass)
+            G = getattr(self.gravity_solver, 'G', 1.0)
+            
+            # Compute on GPU with adaptive softening near BH
+            pos = self.gpu_manager.pos
+            r = cp.sqrt(cp.sum(pos**2, axis=1, keepdims=True))  # Distance from origin
+            r_safe = cp.maximum(r, 1e-6)  # Avoid division by zero
+            
+            # Adaptive softening: increase near BH to prevent extreme forces
+            adaptive_epsilon = cp.maximum(epsilon, 0.01 * r_safe)
+            
+            # Newtonian BH acceleration with softening: a = -G M_BH r / (r² + ε²)^{3/2}
+            r_soft = cp.sqrt(r_safe**2 + adaptive_epsilon**2)
+            a_bh_gpu = -G * bh_mass * pos / (r_soft**3)
+            
+            # Cap extreme accelerations to prevent numerical instability
+            a_bh_magnitude = cp.linalg.norm(a_bh_gpu, axis=1, keepdims=True)
+            max_accel = 1e4  # Maximum allowed acceleration
+            scale_factor = cp.minimum(max_accel / (a_bh_magnitude + 1e-10), 1.0)
+            a_bh_gpu *= scale_factor
+            
+            self.gpu_manager.acc_grav += a_bh_gpu
         
-        # Sync results back to CPU
+        self.state.timing_gravity = time_module.time() - t0_grav
         
-        # Sync results back to CPU
-        # We need accelerations for the integrator
-        a_grav = self.gpu_manager.acc_grav.get()
-        a_hydro = self.gpu_manager.acc_hydro.get()
-        du_dt = self.gpu_manager.du_dt.get()
+        # 7. Compute Hydro forces using same neighbour lists (TreeSPH)
+        t0_pressure = time_module.time()
         
-        # Also sync h back because it was updated
-        self.particles.smoothing_lengths = self.gpu_manager.h.get()
+        if compute_hydro_treesph is not None:
+            # Use optimized TreeSPH kernel with cached neighbours
+            self.gpu_manager.acc_hydro, self.gpu_manager.du_dt = compute_hydro_treesph(
+                self.gpu_manager.pos,
+                self.gpu_manager.vel,
+                self.gpu_manager.mass,
+                self.gpu_manager.h,
+                self.gpu_manager.rho,
+                self.gpu_manager.pressure,
+                self.gpu_manager.cs,
+                neighbour_lists,
+                neighbour_counts,
+                alpha=self.config.artificial_viscosity_alpha,
+                beta=self.config.artificial_viscosity_beta
+            )
+        else:
+            # Fallback to brute force
+            from tde_sph.gpu import compute_hydro_gpu
+            self.gpu_manager.acc_hydro.fill(0.0)
+            self.gpu_manager.du_dt.fill(0.0)
+            compute_hydro_gpu(
+                self.gpu_manager.pos,
+                self.gpu_manager.vel,
+                self.gpu_manager.mass,
+                self.gpu_manager.h,
+                self.gpu_manager.rho,
+                self.gpu_manager.pressure,
+                self.gpu_manager.cs,
+                self.gpu_manager.acc_hydro,
+                self.gpu_manager.du_dt,
+                self.config.artificial_viscosity_alpha,
+                self.config.artificial_viscosity_beta
+            )
+        self.state.timing_sph_pressure = time_module.time() - t0_pressure
         
+        # 8. Transfer results back to CPU only at the end
+        t0_transfer = time_module.time()
+        a_grav = cp.asnumpy(self.gpu_manager.acc_grav)
+        a_hydro = cp.asnumpy(self.gpu_manager.acc_hydro)
+        du_dt = cp.asnumpy(self.gpu_manager.du_dt)
+        #self.state.timing_gpu_transfer += time_module.time() - t0_transfer
+        
+        # Mark that data is on GPU for next step
+        self.gpu_manager.data_on_gpu = True
+        
+        # Check for NaN/inf in accelerations
+        if not np.all(np.isfinite(a_grav)) or not np.all(np.isfinite(a_hydro)):
+            self._log("ERROR: GPU accelerations contain NaN or inf")
+            self._log(f"a_grav finite: {np.all(np.isfinite(a_grav))}, a_hydro finite: {np.all(np.isfinite(a_hydro))}")
+            
+            # Detailed diagnostics
+            if not np.all(np.isfinite(a_hydro)):
+                # Check input data that went into hydro computation
+                self._log(f"Hydro inputs:")
+                self._log(f"  density range: [{float(np.min(density_cpu)):.3e}, {float(np.max(density_cpu)):.3e}]")
+                self._log(f"  density zeros: {int(np.sum(density_cpu == 0.0))}")
+                self._log(f"  pressure range: [{float(np.min(self.particles.pressure)):.3e}, {float(np.max(self.particles.pressure)):.3e}]")
+                self._log(f"  sound_speed range: [{float(np.min(self.particles.sound_speed)):.3e}, {float(np.max(self.particles.sound_speed)):.3e}]")
+                self._log(f"  neighbour_counts range: [{int(cp.min(neighbour_counts))}, {int(cp.max(neighbour_counts))}]")
+                
+                # Check which particles have NaN
+                nan_mask = ~np.isfinite(a_hydro).any(axis=1)
+                nan_count = int(np.sum(nan_mask))
+                self._log(f"  particles with NaN a_hydro: {nan_count}/{len(a_hydro)}")
+                
+                if nan_count > 0 and nan_count < 10:
+                    nan_indices = np.where(nan_mask)[0]
+                    self._log(f"  NaN particle indices: {nan_indices.tolist()}")
+                    for idx in nan_indices[:3]:
+                        self._log(f"    Particle {idx}: rho={density_cpu[idx]:.3e}, P={self.particles.pressure[idx]:.3e}, "
+                            f"cs={self.particles.sound_speed[idx]:.3e}, neighbours={int(neighbour_counts[idx])}")
+            
+            raise ValueError("Invalid GPU accelerations")
+        
+        a_total = a_grav + a_hydro
+        if not np.all(np.isfinite(a_total)):
+            self._log("ERROR: Total accelerations contain NaN or inf")
+            raise ValueError("Invalid total accelerations")
+
+        # Radiation cooling/heating on CPU (density/temperature already on host)
+        du_dt_total = du_dt
+        if self.radiation_model is not None:
+            du_dt_rad = self._compute_radiation_du_dt()
+            if du_dt_rad is not None:
+                du_dt_total = du_dt + du_dt_rad
+
         return {
             'gravity': a_grav,
             'hydro': a_hydro,
-            'total': a_grav + a_hydro,
-            'du_dt': du_dt
+            'total': a_total,
+            'du_dt': du_dt_total
         }
+
+    def _enforce_timestep_limits(self, candidate_dt: float) -> float:
+        """Clamp timestep proposals using absolute and per-step limits."""
+        dt_min = float(self.config.dt_min)
+        dt_max = float(self.config.dt_max)
+        change_limit = max(float(self.config.dt_change_limit), 1.0)
+        prev_dt = max(float(self.state.dt), dt_min)
+
+        lower_change = prev_dt / change_limit
+        upper_change = prev_dt * change_limit
+
+        effective_min = max(dt_min, lower_change)
+        effective_max = min(dt_max, upper_change)
+
+        limited_dt = min(max(candidate_dt, effective_min), effective_max)
+
+        reasons = []
+        eps = 1e-12
+        if candidate_dt < dt_min - eps:
+            reasons.append('dt_min')
+        if candidate_dt > dt_max + eps:
+            reasons.append('dt_max')
+        if candidate_dt < lower_change - eps:
+            reasons.append('decrease_limit')
+        if candidate_dt > upper_change + eps:
+            reasons.append('increase_limit')
+
+        reason_str = 'none' if not reasons else ','.join(sorted(set(reasons)))
+
+        self.state.last_dt_candidate = candidate_dt
+        self.state.last_dt_limiter = reason_str
+
+        if reason_str != 'none' and self.config.verbose:
+            self._log(
+                "dt clamp applied (%s): proposed %.3e -> %.3e"
+                % (reason_str, candidate_dt, limited_dt)
+            )
+
+        return limited_dt
 
     def step(self):
         """
         Advance simulation by one timestep.
         """
-        # Compute forces
+        t0_step = time_module.time()
+        
+        # Compute forces (this internally times gravity, SPH density, SPH pressure)
         forces = self.compute_forces()
 
         # Advance particles
+        t0_integrate = time_module.time()
         self.integrator.step(
             self.particles,
             self.state.dt,
             forces
         )
 
+        # Update derived diagnostics after state advance
+        self._update_velocity_magnitude()
+        self.state.timing_integration = time_module.time() - t0_integrate
+
         # Update time
         self.state.time += self.state.dt
+        if not np.isfinite(self.state.time):
+            self._log(f"ERROR: Time became NaN, dt={self.state.dt}")
+            raise ValueError("Time became NaN")
         self.state.step += 1
 
         # Estimate next timestep (use GR-specific CFL factor if in GR mode)
+        t0_dt_est = time_module.time()
         cfl_factor = self.config.cfl_factor_gr if self.config.mode == "GR" else self.config.cfl_factor
-        self.state.dt = self.integrator.estimate_timestep(
+        proposed_dt = self.integrator.estimate_timestep(
             self.particles,
             cfl_factor=cfl_factor,
-            accelerations=forces['total']
+            accelerations=forces['total'],
+            min_dt=self.config.dt_min,
+            max_dt=self.config.dt_max,
+            metric=self.metric,
+            config=self.config
         )
+        self.state.dt = self._enforce_timestep_limits(proposed_dt)
+        if not np.isfinite(self.state.dt) or self.state.dt <= 0:
+            self._log(f"ERROR: Invalid timestep dt={self.state.dt}, proposed={proposed_dt}")
+            raise ValueError(f"Timestep became invalid: dt={self.state.dt}")
+        
+        # Accumulate timestep estimation timing for averaging
+        dt_est_time = time_module.time() - t0_dt_est
+        self.state._timestep_est_accumulator += dt_est_time
+        self.state._timestep_est_count += 1
 
-        # Update energy diagnostics
-        energies = self.compute_energies()
-        self.state.kinetic_energy = energies['kinetic']
-        self.state.potential_energy = energies['potential']
-        self.state.internal_energy = energies['internal']
-        self.state.total_energy = energies['total']
-
-        if self.state.initial_energy is None:
-            self.state.initial_energy = self.state.total_energy
+        # Energy computation moved to write_snapshot() for performance
+        # (only compute when actually writing snapshots)
+        
+        # Total step time
+        self.state.timing_total = time_module.time() - t0_step
+        
+        # Calculate "other" time (remaining overhead)
+        accounted_time = (
+            self.state.timing_compute_forces +
+            self.state.timing_integration +
+            self.state.timing_energy_computation +
+            self.state.timing_timestep_estimation +
+            self.state.timing_io
+        )
+        self.state.timing_other = max(0.0, self.state.timing_total - accounted_time)
 
     def write_snapshot(self):
         """
         Write current state to HDF5 snapshot.
         """
         from tde_sph.io import write_snapshot
+        
+        # Compute energies when writing snapshot (not every step)
+        t0_energy = time_module.time()
+        energies = self.compute_energies()
+        self.state.kinetic_energy = energies['kinetic']
+        self.state.potential_energy = energies['potential']
+        self.state.internal_energy = energies['internal']
+        self.state.total_energy = energies['total']
+        self.state.timing_energy_computation = (time_module.time() - t0_energy) * (self.state.dt / self.config.snapshot_interval)
+        
+        if self.state.initial_energy is None:
+            self.state.initial_energy = self.state.total_energy
 
         filename = self.output_dir / f"snapshot_{self.state.snapshot_count:04d}.h5"
 
@@ -749,6 +1418,8 @@ class Simulation:
             'smoothing_length': self.particles.smoothing_length,
             'pressure': self.particles.pressure,
             'sound_speed': self.particles.sound_speed,
+            'temperature': self.particles.temperature,
+            'velocity_magnitude': self.particles.velocity_magnitude,
         }
 
         write_snapshot(str(filename), particle_data, self.state.time, metadata)
@@ -778,6 +1449,26 @@ class Simulation:
             return False
 
         return True
+
+    def get_averaged_timestep_timing(self) -> float:
+        """
+        Get averaged timestep estimation timing since last call and reset accumulator.
+        
+        Returns
+        -------
+        float
+            Average timestep estimation time in seconds, or 0.0 if no steps accumulated.
+        """
+        if self.state._timestep_est_count == 0:
+            return 0.0
+        
+        avg_time = self.state._timestep_est_accumulator / self.state._timestep_est_count
+        
+        # Reset accumulators
+        self.state._timestep_est_accumulator = 0.0
+        self.state._timestep_est_count = 0
+        
+        return avg_time
 
     def run(self):
         """

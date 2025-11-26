@@ -24,6 +24,7 @@ try:
         QLabel, QTableWidget, QTableWidgetItem, QTabWidget
     )
     from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtGui import QFont
     PYQT_VERSION = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -31,6 +32,7 @@ except ImportError:
         QLabel, QTableWidget, QTableWidgetItem, QTabWidget
     )
     from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtGui import QFont
     PYQT_VERSION = 5
 
 # Matplotlib integration
@@ -138,8 +140,13 @@ class EnergyPlotWidget(FigureCanvas):
             # Plot conservation error
             self.ax_error.plot(self.times, self.E_error, 'k-', linewidth=1.5)
 
-        self.fig.tight_layout()
-        self.draw()
+        # Always call tight_layout and draw, even if no data (prevents crash)
+        try:
+            self.fig.tight_layout()
+            self.draw()
+        except Exception as e:
+            # Silently handle any plotting errors
+            pass
 
     def clear_data(self):
         """Clear all data and reset plots."""
@@ -168,7 +175,7 @@ class StatisticsWidget(QWidget):
         layout = QVBoxLayout()
 
         # Create table
-        self.table = QTableWidget(10, 2)
+        self.table = QTableWidget(12, 2)
         self.table.setHorizontalHeaderLabels(['Quantity', 'Value'])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setMaximumHeight(300)
@@ -180,7 +187,9 @@ class StatisticsWidget(QWidget):
             'Total Energy',
             'Kinetic Energy',
             'Potential Energy',
+            'Potential (BH)',
             'Internal Energy',
+            'Median Distance (BH)',
             'Mean Density',
             'Max Density',
             'Mean Temperature',
@@ -208,11 +217,13 @@ class StatisticsWidget(QWidget):
             'total_energy': 2,
             'kinetic_energy': 3,
             'potential_energy': 4,
-            'internal_energy': 5,
-            'mean_density': 6,
-            'max_density': 7,
-            'mean_temperature': 8,
-            'max_temperature': 9
+            'potential_bh': 5,
+            'internal_energy': 6,
+            'median_distance_from_bh': 7,
+            'mean_density': 8,
+            'max_density': 9,
+            'mean_temperature': 10,
+            'max_temperature': 11
         }
 
         for key, value in stats.items():
@@ -231,6 +242,214 @@ class StatisticsWidget(QWidget):
             return f"{value:.4f}"
 
 
+class PercentilePlotWidget(FigureCanvas):
+    """Matplotlib canvas for percentile evolution plots."""
+
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        self.fig = Figure(figsize=(width, height), dpi=dpi)
+        self.ax_distance = self.fig.add_subplot(211)
+        self.ax_energy = self.fig.add_subplot(212, sharex=self.ax_distance)
+        
+        super().__init__(self.fig)
+        self.setParent(parent)
+        
+        # Data storage
+        self.times: List[float] = []
+        self.dist_p01: List[float] = []
+        self.dist_p10: List[float] = []
+        self.dist_p25: List[float] = []
+        self.dist_p50: List[float] = []
+        self.dist_p75: List[float] = []
+        self.dist_p90: List[float] = []
+        self.dist_p99: List[float] = []
+        
+        self.eng_p01: List[float] = []
+        self.eng_p10: List[float] = []
+        self.eng_p25: List[float] = []
+        self.eng_p50: List[float] = []
+        self.eng_p75: List[float] = []
+        self.eng_p90: List[float] = []
+        self.eng_p99: List[float] = []
+        
+        self._setup_plots()
+    
+    def _setup_plots(self):
+        """Set up plot styling."""
+        self.ax_distance.set_ylabel('Distance from BH', fontsize=10)
+        self.ax_distance.set_title('Distance Percentiles vs Time', fontsize=11, fontweight='bold')
+        self.ax_distance.grid(True, alpha=0.3)
+        self.ax_distance.tick_params(labelsize=8)
+        
+        self.ax_energy.set_xlabel('Time', fontsize=10)
+        self.ax_energy.set_ylabel('Specific Energy', fontsize=10)
+        self.ax_energy.set_title('Energy Percentiles vs Time', fontsize=10)
+        self.ax_energy.grid(True, alpha=0.3)
+        self.ax_energy.tick_params(labelsize=8)
+        
+        self.fig.tight_layout()
+    
+    def update_data(self, time: float, dist_pct: List[float], eng_pct: List[float]):
+        """Add new percentile data."""
+        self.times.append(time)
+        self.dist_p01.append(dist_pct[0])
+        self.dist_p10.append(dist_pct[1])
+        self.dist_p25.append(dist_pct[2])
+        self.dist_p50.append(dist_pct[3])
+        self.dist_p75.append(dist_pct[4])
+        self.dist_p90.append(dist_pct[5])
+        self.dist_p99.append(dist_pct[6])
+        
+        self.eng_p01.append(eng_pct[0])
+        self.eng_p10.append(eng_pct[1])
+        self.eng_p25.append(eng_pct[2])
+        self.eng_p50.append(eng_pct[3])
+        self.eng_p75.append(eng_pct[4])
+        self.eng_p90.append(eng_pct[5])
+        self.eng_p99.append(eng_pct[6])
+        
+        # Limit data
+        if len(self.times) > 1000:
+            self.times = self.times[-1000:]
+            self.dist_p01 = self.dist_p01[-1000:]
+            self.dist_p10 = self.dist_p10[-1000:]
+            self.dist_p25 = self.dist_p25[-1000:]
+            self.dist_p50 = self.dist_p50[-1000:]
+            self.dist_p75 = self.dist_p75[-1000:]
+            self.dist_p90 = self.dist_p90[-1000:]
+            self.dist_p99 = self.dist_p99[-1000:]
+            self.eng_p01 = self.eng_p01[-1000:]
+            self.eng_p10 = self.eng_p10[-1000:]
+            self.eng_p25 = self.eng_p25[-1000:]
+            self.eng_p50 = self.eng_p50[-1000:]
+            self.eng_p75 = self.eng_p75[-1000:]
+            self.eng_p90 = self.eng_p90[-1000:]
+            self.eng_p99 = self.eng_p99[-1000:]
+        
+        self._redraw()
+    
+    def _redraw(self):
+        """Redraw plots."""
+        self.ax_distance.clear()
+        self.ax_energy.clear()
+        self._setup_plots()
+        
+        if len(self.times) > 0:
+            # Distance percentiles with 3 shaded bands
+            self.ax_distance.fill_between(self.times, self.dist_p01, self.dist_p99, alpha=0.1, color='blue', label='1-99%')
+            self.ax_distance.fill_between(self.times, self.dist_p10, self.dist_p90, alpha=0.2, color='blue', label='10-90%')
+            self.ax_distance.fill_between(self.times, self.dist_p25, self.dist_p75, alpha=0.3, color='blue', label='25-75%')
+            self.ax_distance.plot(self.times, self.dist_p50, 'b-', linewidth=2, label='Median')
+            self.ax_distance.legend(fontsize=8, loc='best')
+            
+            # Energy percentiles with 3 shaded bands
+            self.ax_energy.fill_between(self.times, self.eng_p01, self.eng_p99, alpha=0.1, color='red', label='1-99%')
+            self.ax_energy.fill_between(self.times, self.eng_p10, self.eng_p90, alpha=0.2, color='red', label='10-90%')
+            self.ax_energy.fill_between(self.times, self.eng_p25, self.eng_p75, alpha=0.3, color='red', label='25-75%')
+            self.ax_energy.plot(self.times, self.eng_p50, 'r-', linewidth=2, label='Median')
+            self.ax_energy.legend(fontsize=8, loc='best')
+        
+        # Always call tight_layout and draw, even if no data (prevents crash)
+        try:
+            self.fig.tight_layout()
+            self.draw()
+        except Exception as e:
+            # Silently handle any plotting errors
+            pass
+    
+    def clear_data(self):
+        """Clear data."""
+        self.times = []
+        self.dist_p01 = []
+        self.dist_p10 = []
+        self.dist_p25 = []
+        self.dist_p50 = []
+        self.dist_p75 = []
+        self.dist_p90 = []
+        self.eng_p10 = []
+        self.eng_p25 = []
+        self.eng_p50 = []
+        self.eng_p75 = []
+        self.eng_p90 = []
+        self._redraw()
+
+
+class TimingDiagnosticsWidget(QWidget):
+    """Widget for module execution timing information."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        layout = QVBoxLayout()
+        
+        # Create table for timing data (13 rows now)
+        self.table = QTableWidget(13, 2)
+        self.table.setHorizontalHeaderLabels(['Module', 'Time (ms)'])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setMaximumHeight(420)
+        
+        modules = [
+            'Compute Forces (Total)',
+            'Gravity Solver',
+            'SPH Density',
+            'Smoothing Lengths',
+            'SPH Pressure Forces',
+            'Time Integration',
+            'Thermodynamics (EOS)',
+            'Energy Computation',
+            'Timestep Estimation',
+            'GPU Transfer',
+            'I/O Overhead',
+            'Other',
+            'Total Timestep'
+        ]
+        
+        for i, mod in enumerate(modules):
+            self.table.setItem(i, 0, QTableWidgetItem(mod))
+            self.table.setItem(i, 1, QTableWidgetItem('N/A'))
+        
+        layout.addWidget(QLabel("Module Execution Timing (per timestep)"))
+        layout.addWidget(self.table)
+        
+        # Performance summary
+        self.summary_label = QLabel("Performance: N/A")
+        font = QFont()
+        font.setBold(True)
+        self.summary_label.setFont(font)
+        layout.addWidget(self.summary_label)
+        
+        layout.addStretch()
+        self.setLayout(layout)
+    
+    def update_timings(self, timings: Dict[str, float]):
+        """Update timing display."""
+        timing_map = {
+            'compute_forces': 0,
+            'gravity': 1,
+            'sph_density': 2,
+            'smoothing_lengths': 3,
+            'sph_pressure': 4,
+            'integration': 5,
+            'thermodynamics': 6,
+            'energy_computation': 7,
+            'timestep_estimation': 8,
+            'gpu_transfer': 9,
+            'io_overhead': 10,
+            'other': 11,
+            'total': 12
+        }
+        
+        for key, value in timings.items():
+            if key in timing_map:
+                row = timing_map[key]
+                self.table.setItem(row, 1, QTableWidgetItem(f"{value*1000:.2f}"))
+        
+        # Update summary
+        total = timings.get('total', 0)
+        if total > 0:
+            steps_per_sec = 1.0 / total
+            self.summary_label.setText(f"Performance: {steps_per_sec:.1f} steps/sec ({total*1000:.1f} ms/step)")
+
+
 class DataDisplayWidget(QWidget):
     """
     Main data display widget with tabs for different views.
@@ -238,11 +457,15 @@ class DataDisplayWidget(QWidget):
     Tabs:
     1. Energy Evolution: Live energy plots
     2. Statistics: Particle statistics table
-    3. Diagnostics: Additional diagnostic information
+    3. Percentiles: Distance and energy percentile evolution
+    4. Timing: Module execution timing diagnostics
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Chart update control
+        self.charts_enabled = True
 
         # Create layout
         layout = QVBoxLayout()
@@ -286,70 +509,36 @@ class DataDisplayWidget(QWidget):
         stats_tab.setLayout(stats_layout)
         tabs.addTab(stats_tab, "Statistics")
 
-        # Tab 3: Diagnostics (placeholder)
-        diagnostics_tab = QWidget()
-        diag_layout = QVBoxLayout()
-        diag_layout.addWidget(QLabel("Diagnostic information will be displayed here."))
-        diag_layout.addStretch()
-        diagnostics_tab.setLayout(diag_layout)
+        # Tab 3: Percentile plots
+        percentile_tab = QWidget()
+        percentile_layout = QVBoxLayout()
+        
+        self.percentile_plot = PercentilePlotWidget(width=5, height=6)
+        percentile_layout.addWidget(self.percentile_plot)
+        
+        pct_button_layout = QHBoxLayout()
+        clear_pct_button = QPushButton("Clear Data")
+        clear_pct_button.clicked.connect(self.percentile_plot.clear_data)
+        pct_button_layout.addWidget(clear_pct_button)
+        pct_button_layout.addStretch()
+        
+        percentile_layout.addLayout(pct_button_layout)
+        percentile_tab.setLayout(percentile_layout)
+        tabs.addTab(percentile_tab, "Percentiles")
 
-        tabs.addTab(diagnostics_tab, "Diagnostics")
+        # Tab 4: Timing Diagnostics
+        timing_tab = QWidget()
+        timing_layout = QVBoxLayout()
+        
+        self.timing_widget = TimingDiagnosticsWidget()
+        timing_layout.addWidget(self.timing_widget)
+        
+        timing_tab.setLayout(timing_layout)
+        tabs.addTab(timing_tab, "Timing")
 
         layout.addWidget(tabs)
 
         self.setLayout(layout)
-
-        # Auto-update timer (for demo)
-        self.demo_timer = QTimer()
-        self.demo_timer.timeout.connect(self._demo_update)
-        self.demo_time = 0.0
-
-    def start_demo_mode(self):
-        """Start demo mode with simulated data updates."""
-        self.demo_time = 0.0
-        self.demo_timer.start(100)  # Update every 100ms
-
-    def stop_demo_mode(self):
-        """Stop demo mode."""
-        self.demo_timer.stop()
-
-    def _demo_update(self):
-        """Generate demo data for testing."""
-        self.demo_time += 0.1
-
-        # Simulated energy data
-        E0 = -1.0
-        noise = np.random.randn() * 0.001
-
-        energies = {
-            'kinetic': 1.0 + np.sin(self.demo_time * 0.1) * 0.1,
-            'potential': -2.5 + np.cos(self.demo_time * 0.1) * 0.2,
-            'internal': 0.5 + noise,
-            'total': E0 + noise,
-            'error': noise / E0
-        }
-
-        self.energy_plot.update_data(self.demo_time, energies)
-
-        # Simulated statistics
-        stats = {
-            'n_particles': 100000,
-            'total_mass': 1.0,
-            'total_energy': E0,
-            'kinetic_energy': energies['kinetic'],
-            'potential_energy': energies['potential'],
-            'internal_energy': energies['internal'],
-            'mean_density': 1.5 + np.random.rand() * 0.1,
-            'max_density': 10.0 + np.random.rand() * 2.0,
-            'mean_temperature': 5000 + np.random.rand() * 500,
-            'max_temperature': 50000 + np.random.rand() * 5000
-        }
-
-        self.statistics_widget.update_statistics(stats)
-
-        # Stop after 100 time units
-        if self.demo_time >= 100:
-            self.stop_demo_mode()
 
     def update_live_data(self, time: float, energies: Dict[str, float], stats: Dict[str, float]):
         """
@@ -357,11 +546,32 @@ class DataDisplayWidget(QWidget):
 
         Parameters:
             time: Current simulation time
-            energies: Energy dictionary
-            stats: Statistics dictionary
+            energies: Energy dictionary (includes 'potential_bh')
+            stats: Statistics dictionary (includes percentiles and timings)
         """
-        self.energy_plot.update_data(time, energies)
+        # Always update statistics and timing (lightweight)
         self.statistics_widget.update_statistics(stats)
+        
+        # Update BH potential in statistics if available
+        if 'potential_bh' in energies:
+            stats['potential_bh'] = energies['potential_bh']
+            self.statistics_widget.update_statistics(stats)
+        
+        # Update timing diagnostics if available
+        if 'timings' in stats:
+            self.timing_widget.update_timings(stats['timings'])
+        
+        # Only update charts if enabled (expensive matplotlib redraws)
+        if self.charts_enabled:
+            self.energy_plot.update_data(time, energies)
+            
+            # Update percentile plots if data available
+            if 'distance_percentiles' in stats and 'energy_percentiles' in stats:
+                self.percentile_plot.update_data(
+                    time,
+                    stats['distance_percentiles'],
+                    stats['energy_percentiles']
+                )
 
     def _export_energy_data(self):
         """Export energy data to CSV file."""
@@ -402,3 +612,13 @@ class DataDisplayWidget(QWidget):
                 "Export Successful",
                 f"Energy data exported to:\n{file_path}"
             )
+
+    def set_chart_updates_enabled(self, enabled: bool):
+        """
+        Enable or disable live chart updates.
+        
+        Parameters:
+            enabled: True to enable chart updates, False to disable
+        """
+        self.charts_enabled = enabled
+

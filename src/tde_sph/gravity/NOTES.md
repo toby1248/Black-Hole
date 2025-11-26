@@ -89,7 +89,7 @@
 - `geodesic_acceleration()` handles coordinate transformations
 
 **Rationale:**
-- Cartesian natural for SPH neighbor search and hydrodynamics
+- Cartesian natural for SPH neighbour search and hydrodynamics
 - Spherical natural for metric tensor evaluations
 - Separation of concerns via interface
 

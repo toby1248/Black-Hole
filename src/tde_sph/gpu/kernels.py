@@ -1,3 +1,4 @@
+import numpy as np
 import cupy as cp
 
 CUDA_SOURCE = r'''
@@ -357,6 +358,33 @@ compute_density_kernel = module.get_function('compute_density')
 compute_hydro_kernel = module.get_function('compute_hydro')
 count_neighbours_kernel = module.get_function('count_neighbours')
 
+
+def _estimate_gpu_smoothing_bounds(pos, h, min_scale: float = 1e-2, max_scale: float = 32.0):
+    """Compute adaptive smoothing-length bounds directly on the GPU arrays."""
+    valid_mask = cp.logical_and(cp.isfinite(h), h > 0.0)
+    if not cp.any(valid_mask):
+        return 1e-6, 1.0
+
+    h_valid = h[valid_mask]
+    base_min = float(cp.min(h_valid).get())
+    base_max = float(cp.max(h_valid).get())
+
+    centroid = cp.mean(pos, axis=0)
+    offsets = pos - centroid
+    extent = float(cp.max(cp.linalg.norm(offsets, axis=1)).get())
+    if not np.isfinite(extent):
+        extent = 0.0
+
+    h_min_bound = max(base_min * min_scale, 1e-2)
+    h_max_candidates = [base_max * max_scale, h_min_bound * 10.0]
+    if extent > 0.0:
+        h_max_candidates.append(extent)
+    h_max_bound = max(h_max_candidates)
+    if h_max_bound <= h_min_bound:
+        h_max_bound = h_min_bound * 10.0
+
+    return float(h_min_bound), float(h_max_bound)
+
 # Wrappers
 def compute_gravity_bruteforce_gpu(pos, mass, h, acc, G):
     N = pos.shape[0]
@@ -379,15 +407,18 @@ def compute_hydro_gpu(pos, vel, mass, h, rho, pressure, cs, acc_hydro, du_dt, al
         acc_hydro, du_dt, cp.float32(alpha), cp.float32(beta), cp.int32(N)
     ))
 
-def update_smoothing_lengths_gpu(pos, h, target_neighbours=50, tolerance=0.05, max_iter=50):
+def update_smoothing_lengths_gpu(pos, h, target_neighbours=50, tolerance=0.05, max_iter=10):
     """
     Host-side wrapper for adaptive smoothing length update on GPU.
+    Mirrors the CPU implementation by enforcing dynamic bounds derived
+    from the instantaneous h-distribution and spatial extent.
     """
     N = pos.shape[0]
     block = (128,)
     grid = ((N + 127) // 128,)
     
     counts = cp.zeros(N, dtype=cp.int32)
+    h_min_bound, h_max_bound = _estimate_gpu_smoothing_bounds(pos, h)
     
     for i in range(max_iter):
         count_neighbours_kernel(grid, block, (pos, h, counts, cp.int32(N)))
@@ -398,7 +429,7 @@ def update_smoothing_lengths_gpu(pos, h, target_neighbours=50, tolerance=0.05, m
         factor = ratio ** (-1.0/3.0)
         
         h *= factor
-        h = cp.clip(h, 1e-6, 1e2)
+        cp.clip(h, h_min_bound, h_max_bound, out=h)
         
         error = cp.abs(n_actual - target_neighbours) / target_neighbours
         max_error = cp.max(error)

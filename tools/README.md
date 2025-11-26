@@ -40,6 +40,26 @@ python tools/export_to_blender.py snapshots/*.h5 -o renders/ -f ply --batch --co
 python tools/export_to_blender.py snapshot_0000.h5 -o output.ply -f ply --color internal_energy --cmap plasma
 ```
 
+### convert_hdf5_to_webjson.py
+
+Convert HDF5 snapshots into the JSON schema used by the `web/` visualizer (`data_loader.js`).
+
+```bash
+# Single snapshot -> snapshot_0000.json (next to input)
+python tools/convert_hdf5_to_webjson.py outputs/snapshot_0000.h5
+
+# Batch convert and downsample for browser performance
+python tools/convert_hdf5_to_webjson.py outputs/snapshot_*.h5 -o web/data/ --stride 4 --limit 50000
+
+# Custom output name with flat positions array
+python tools/convert_hdf5_to_webjson.py outputs/snapshot_0042.h5 -o web/data/tde_snapshot_0042.json --flatten-positions
+```
+
+**Notes:**
+- Outputs fields: `time`, `step`, `n_particles`, `positions`, `density`, `temperature`, `internal_energy`, `velocity_magnitude`, `pressure`, `entropy`.
+- Derives `velocity_magnitude` from velocities when missing; `pressure`/`entropy` fall back to ideal-gas relations using `--gamma` (default 5/3).
+- Use `--stride`/`--limit` to shrink large particle sets before loading in the browser.
+
 **Python API:**
 
 ```python

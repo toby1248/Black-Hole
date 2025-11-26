@@ -20,7 +20,8 @@ import warnings
 from tde_sph.core.interfaces import Metric
 from tde_sph.metric.coordinates import (
     cartesian_to_bl_spherical,
-    bl_spherical_to_cartesian,
+    velocity_cartesian_to_bl,
+    acceleration_bl_to_cartesian,
     check_coordinate_validity,
     EPS_COORD
 )
@@ -476,8 +477,8 @@ class KerrMetric(Metric):
         ----------
         x : np.ndarray, shape (N, 3) or (3,)
             Spatial position in Cartesian coordinates.
-        v : np.ndarray, shape (N, 4) or (4,)
-            4-velocity (u^t, u^r, u^θ, u^φ) in Boyer-Lindquist coordinates.
+        v : np.ndarray, shape (N, 3) or (3,)
+            Cartesian 3-velocity dx/dt.
 
         Returns
         -------
@@ -486,82 +487,78 @@ class KerrMetric(Metric):
 
         Notes
         -----
-        Geodesic equation: d²x^μ/dτ² = -Γ^μ_νρ u^ν u^ρ
-
-        For Kerr, this includes:
-        - Gravitational attraction
-        - Frame-dragging (Lense-Thirring effect)
-        - Spin-orbit coupling
-
-        Reference: Tejeda et al. (2017), Eqs. 15-17
+        - Converts inputs to Boyer-Lindquist coordinates internally.
+        - Constructs normalized 4-velocity satisfying g_{μν} u^μ u^ν = -1.
+        - Uses geodesic equation with proper-time parameterization and
+          transforms back to Cartesian acceleration.
         """
-        x = np.atleast_1d(x)
-        v = np.atleast_1d(v)
+        x = np.asarray(x, dtype=np.float64)
+        v = np.asarray(v, dtype=np.float64)
+
         is_single = x.ndim == 1
+        if is_single:
+            x_arr = x[np.newaxis, :]
+            v_arr = v[np.newaxis, :]
+        else:
+            x_arr = x
+            v_arr = v
 
-        # Get Christoffel symbols and compute acceleration
-        gamma = self.christoffel_symbols(x)
+        # Convert to Boyer-Lindquist coordinates and velocities
+        r, theta, phi = cartesian_to_bl_spherical(x_arr)
+        v_r, v_theta, v_phi = velocity_cartesian_to_bl(x_arr, v_arr)
 
-        # Extract 4-velocity
-        u_t = v[..., 0]
-        u_r = v[..., 1]
-        u_theta = v[..., 2]
-        u_phi = v[..., 3]
+        # Metric tensor components for normalization
+        g = self.metric_tensor(x_arr)
+        if g.ndim == 2:
+            g = g[np.newaxis, ...]
 
-        # Compute acceleration: a^μ = -Γ^μ_νρ u^ν u^ρ
-        # This is a contraction over ν, ρ indices
+        g_tt = g[:, 0, 0]
+        g_tphi = g[:, 0, 3]
+        g_rr = g[:, 1, 1]
+        g_thetatheta = g[:, 2, 2]
+        g_phiphi = g[:, 3, 3]
+
+        denom = g_tt + 2.0 * g_tphi * v_phi + g_rr * v_r**2 + \
+                g_thetatheta * v_theta**2 + g_phiphi * v_phi**2
+
+        # Ensure denominator is negative for timelike normalization
+        denom = np.where(denom < -1e-12, denom, -1e-12)
+
+        u_t = np.sqrt(-1.0 / denom)
+        u_r = v_r * u_t
+        u_theta = v_theta * u_t
+        u_phi = v_phi * u_t
+
+        four_velocity = np.stack([u_t, u_r, u_theta, u_phi], axis=-1)
+
+        gamma = self.christoffel_symbols(x_arr)
+        if gamma.ndim == 3:
+            gamma = gamma[np.newaxis, ...]
+
+        # Geodesic equation: a^μ = -Γ^μ_νρ u^ν u^ρ
+        a_sph = -np.einsum('nmab,na,nb->nm', gamma, four_velocity, four_velocity)
+
+        a_r = a_sph[:, 1]
+        a_theta = a_sph[:, 2]
+        a_phi = a_sph[:, 3]
+
+        # Transform back to Cartesian acceleration
+        a_cart = acceleration_bl_to_cartesian(
+            r,
+            theta,
+            phi,
+            v_r,
+            v_theta,
+            v_phi,
+            a_r,
+            a_theta,
+            a_phi
+        )
 
         if is_single:
-            # a^i = -Γ^i_νρ u^ν u^ρ (sum over ν, ρ)
-            u = np.array([u_t, u_r, u_theta, u_phi])
-            a_sph = np.zeros(4, dtype=np.float64)
+            return a_cart[0].astype(np.float32)
 
-            for mu in range(4):
-                for nu in range(4):
-                    for rho in range(4):
-                        a_sph[mu] -= gamma[mu, nu, rho] * u[nu] * u[rho]
-
-            # Extract spatial components and convert to Cartesian
-            r, theta, phi = cartesian_to_bl_spherical(x)
-            a_r, a_theta, a_phi = a_sph[1], a_sph[2], a_sph[3]
-
-        else:
-            # Batched version
-            u = np.stack([u_t, u_r, u_theta, u_phi], axis=-1)
-            a_sph = np.zeros((x.shape[0], 4), dtype=np.float64)
-
-            for mu in range(4):
-                for nu in range(4):
-                    for rho in range(4):
-                        a_sph[:, mu] -= gamma[:, mu, nu, rho] * u[:, nu] * u[:, rho]
-
-            r, theta, phi = cartesian_to_bl_spherical(x)
-            a_r = a_sph[:, 1]
-            a_theta = a_sph[:, 2]
-            a_phi = a_sph[:, 3]
-
-        # Transform to Cartesian coordinates
-        sin_theta = np.sin(theta)
-        cos_theta = np.cos(theta)
-        sin_phi = np.sin(phi)
-        cos_phi = np.cos(phi)
-
-        a_x = (a_r * sin_theta * cos_phi +
-               r * a_theta * cos_theta * cos_phi -
-               r * a_phi * sin_theta * sin_phi)
-
-        a_y = (a_r * sin_theta * sin_phi +
-               r * a_theta * cos_theta * sin_phi +
-               r * a_phi * sin_theta * cos_phi)
-
-        a_z = a_r * cos_theta - r * a_theta * sin_theta
-
-        if is_single:
-            a = np.array([a_x, a_y, a_z], dtype=np.float32)
-        else:
-            a = np.stack([a_x, a_y, a_z], axis=-1).astype(np.float32)
-
-        return a
+        return a_cart.astype(np.float32)
 
     def ergosphere_radius(self, theta: float) -> float:
         """

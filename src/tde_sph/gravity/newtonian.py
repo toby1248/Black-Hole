@@ -149,7 +149,12 @@ class NewtonianGravity(GravitySolver):
     Future optimization: tree-based solver (Barnes-Hut or FMM) for larger N.
     """
 
-    def __init__(self, G: float = 1.0):
+    def __init__(
+        self,
+        G: float = 1.0,
+        bh_mass: float = 0.0,
+        bh_position: Optional[np.ndarray] = None,
+    ):
         """
         Initialize Newtonian gravity solver.
 
@@ -157,8 +162,42 @@ class NewtonianGravity(GravitySolver):
         ----------
         G : float, optional
             Gravitational constant (default 1.0 for dimensionless units).
+        bh_mass : float, optional
+            Optional central point mass (e.g., black hole). Default 0 disables it.
+        bh_position : array-like, optional
+            Cartesian position of central mass (default origin).
         """
         self.G = np.float32(G)
+        self.bh_mass = np.float32(bh_mass)
+        if bh_position is None:
+            self.bh_position = np.zeros(3, dtype=np.float32)
+        else:
+            pos = np.asarray(bh_position, dtype=np.float32)
+            if pos.shape != (3,):
+                raise ValueError("bh_position must be a 3-vector")
+            self.bh_position = pos
+
+    def _compute_bh_acceleration(self, positions: NDArrayFloat) -> NDArrayFloat:
+        """Acceleration from optional central mass."""
+        if self.bh_mass <= 0.0:
+            return np.zeros_like(positions, dtype=np.float32)
+
+        r_vec = positions - self.bh_position[np.newaxis, :]
+        r = np.linalg.norm(r_vec, axis=1, keepdims=True)
+        r_safe = np.maximum(r, 1e-6).astype(np.float32)
+        accel = -self.G * self.bh_mass * r_vec / (r_safe**3)
+        return accel.astype(np.float32)
+
+    def _compute_bh_potential(self, positions: NDArrayFloat) -> NDArrayFloat:
+        """Potential from optional central mass."""
+        if self.bh_mass <= 0.0:
+            return np.zeros(positions.shape[0], dtype=np.float32)
+
+        r_vec = positions - self.bh_position[np.newaxis, :]
+        r = np.linalg.norm(r_vec, axis=1)
+        r_safe = np.maximum(r, 1e-6).astype(np.float32)
+        phi = -self.G * self.bh_mass / r_safe
+        return phi.astype(np.float32)
 
     def compute_acceleration(
         self,
@@ -194,47 +233,38 @@ class NewtonianGravity(GravitySolver):
         smoothing_lengths = smoothing_lengths.astype(np.float32)
 
         if HAS_NUMBA:
-            return _compute_accel_numba(positions, masses, smoothing_lengths, self.G)
-        
-        # Fallback to vectorized NumPy implementation
-        N = len(positions)
-        # ... (rest of original numpy implementation if needed, but we'll just use the Numba one or the old one)
-        # For brevity in this edit, I'll keep the old implementation as fallback logic
-        
-        # Initialize acceleration array
-        accel = np.zeros((N, 3), dtype=np.float32)
+            accel = _compute_accel_numba(positions, masses, smoothing_lengths, self.G)
+        else:
+            # Fallback to vectorized NumPy implementation
+            N = len(positions)
 
-        # Compute pairwise separations: r_ij = r_j - r_i
-        # Shape: (N, N, 3)
-        r_ij = positions[np.newaxis, :, :] - positions[:, np.newaxis, :]
+            # Initialize acceleration array
+            accel = np.zeros((N, 3), dtype=np.float32)
 
-        # Compute squared distances: |r_ij|²
-        # Shape: (N, N)
-        r2 = np.sum(r_ij**2, axis=2)
+            # Compute pairwise separations: r_ij = r_j - r_i
+            r_ij = positions[np.newaxis, :, :] - positions[:, np.newaxis, :]
 
-        # Softening: use average of smoothing lengths for each pair
-        # ε² = ((h_i + h_j) / 2)²
-        # Shape: (N, N)
-        h_i = smoothing_lengths[:, np.newaxis]
-        h_j = smoothing_lengths[np.newaxis, :]
-        epsilon2 = ((h_i + h_j) / 2.0)**2
+            # Compute squared distances: |r_ij|²
+            r2 = np.sum(r_ij**2, axis=2)
 
-        # Softened distance: r_soft² = r² + ε²
-        r2_soft = r2 + epsilon2
+            # Softening: use average of smoothing lengths for each pair
+            h_i = smoothing_lengths[:, np.newaxis]
+            h_j = smoothing_lengths[np.newaxis, :]
+            epsilon2 = ((h_i + h_j) / 2.0)**2
 
-        # Compute 1 / r_soft³
-        # Shape: (N, N)
-        # Use np.where to handle r=0 (self-interaction) gracefully
-        inv_r3 = np.where(r2 > 0,
-                         r2_soft**(-1.5),
-                         0.0).astype(np.float32)
+            # Softened distance: r_soft² = r² + ε²
+            r2_soft = r2 + epsilon2
 
-        # Gravitational force per unit mass: F_ij / m_i = G m_j r_ij / r_soft³
-        # Acceleration: a_i = ∑_j F_ij / m_i
-        # Shape: (N, 3)
-        # Broadcasting: (N, N, 1) * (N, N, 3) * (N, N, 1) → (N, N, 3) → sum over j
-        masses_inv_r3 = (masses[np.newaxis, :] * inv_r3)[:, :, np.newaxis]
-        accel = self.G * np.sum(masses_inv_r3 * r_ij, axis=1)
+            # Compute 1 / r_soft³ with safe self-interaction handling
+            inv_r3 = np.where(r2 > 0,
+                             r2_soft**(-1.5),
+                             0.0).astype(np.float32)
+
+            masses_inv_r3 = (masses[np.newaxis, :] * inv_r3)[:, :, np.newaxis]
+            accel = self.G * np.sum(masses_inv_r3 * r_ij, axis=1)
+
+        if self.bh_mass > 0.0:
+            accel += self._compute_bh_acceleration(positions)
 
         return accel.astype(np.float32)
 
@@ -254,31 +284,24 @@ class NewtonianGravity(GravitySolver):
         smoothing_lengths = smoothing_lengths.astype(np.float32)
 
         if HAS_NUMBA:
-            return _compute_potential_numba(positions, masses, smoothing_lengths, self.G)
+            potential = _compute_potential_numba(positions, masses, smoothing_lengths, self.G)
+        else:
+            N = len(positions)
 
-        # Fallback
-        N = len(positions)
+            r_ij = positions[np.newaxis, :, :] - positions[:, np.newaxis, :]
+            r2 = np.sum(r_ij**2, axis=2)
 
-        # Compute pairwise distances
-        # r_ij = positions[j] - positions[i]
-        r_ij = positions[np.newaxis, :, :] - positions[:, np.newaxis, :]
-        r2 = np.sum(r_ij**2, axis=2)
+            h_i = smoothing_lengths[:, np.newaxis]
+            h_j = smoothing_lengths[np.newaxis, :]
+            epsilon2 = ((h_i + h_j) / 2.0)**2
 
-        # Softening
-        h_i = smoothing_lengths[:, np.newaxis]
-        h_j = smoothing_lengths[np.newaxis, :]
-        epsilon2 = ((h_i + h_j) / 2.0)**2
+            r_soft = np.sqrt(r2 + epsilon2)
+            np.fill_diagonal(r_soft, np.inf)
 
-        # Softened distance
-        r_soft = np.sqrt(r2 + epsilon2)
+            potential = -self.G * np.sum(masses[np.newaxis, :] / r_soft, axis=1)
 
-        # Avoid self-interaction (i=j)
-        # Set diagonal to large value to avoid division issues
-        np.fill_diagonal(r_soft, np.inf)
-
-        # Potential: φ_i = -G ∑_j m_j / r_soft
-        # Shape: (N,)
-        potential = -self.G * np.sum(masses[np.newaxis, :] / r_soft, axis=1)
+        if self.bh_mass > 0.0:
+            potential += self._compute_bh_potential(positions)
 
         return potential.astype(np.float32)
 

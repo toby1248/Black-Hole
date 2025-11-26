@@ -8,7 +8,7 @@
 
 **Priority Order**:
 1. Newtonian Gravity (`gravity/newtonian_cuda.py`) — Highest impact, 50-200x speedup potential
-2. Neighbor Search (`sph/neighbours_gpu.py`) — 10-50x speedup
+2. Neighbour Search (`sph/neighbours_gpu.py`) — 10-50x speedup
 3. SPH Hydro Forces (`sph/hydro_forces_cuda.py`) — 20-100x speedup
 4. Time Integration (`integration/leapfrog_cuda.py`) — Optional, 5-20x speedup
 
@@ -52,21 +52,21 @@ The following modules have been identified as high-impact targets for CUDA accel
 - **Expected Speedup**: 50-200x for N > 10,000
 - **Key Challenge**: Memory-efficient tiled N-body kernel
 
-### 2. **Neighbor Search**
+### 2. **Neighbour Search**
 - **CPU Module**: `src/tde_sph/sph/neighbours_cpu.py`
 - **CUDA Target**: `src/tde_sph/sph/neighbours_gpu.py`
 - **API**: `find_neighbours(positions, smoothing_lengths, ...) -> List[NDArray]`
 - **Complexity**: O(N²) or O(N log N) with spatial grid
 - **Expected Speedup**: 10-50x
-- **Key Challenge**: Dynamic neighbor list construction on GPU
+- **Key Challenge**: Dynamic neighbour list construction on GPU
 
 ### 3. **SPH Hydrodynamic Forces**
 - **CPU Module**: `src/tde_sph/sph/hydro_forces.py`
 - **CUDA Target**: `src/tde_sph/sph/hydro_forces_cuda.py`
 - **API**: `compute_hydro_acceleration(positions, velocities, masses, ...) -> Tuple[accel, du_dt]`
-- **Complexity**: O(N × k) where k = avg neighbors
+- **Complexity**: O(N × k) where k = avg neighbours
 - **Expected Speedup**: 20-100x
-- **Key Challenge**: Efficient neighbor iteration and kernel gradient evaluation
+- **Key Challenge**: Efficient neighbour iteration and kernel gradient evaluation
 
 ### 4. **Time Integration** (Optional)
 - **CPU Module**: `src/tde_sph/integration/leapfrog.py`
@@ -128,12 +128,12 @@ Represent particle state as **dense contiguous arrays** (already present in CPU 
 - **Masses and scalars**: `float32[N]` or `float32[N, 1]`
   - Masses, densities, pressures, internal energies, smoothing lengths, etc.
 
-- **Neighbor lists**:
+- **Neighbour lists**:
   - CPU uses `List[NDArray[int32]]` (variable length per particle)
   - GPU options:
-    1. Flattened array + offset array: `neighbors_flat[total_neighbors], offsets[N+1]`
-    2. Fixed-size 2D array: `neighbors[N, max_neighbors]` with sentinel values
-  - Choose based on memory constraints and neighbor count distribution
+   1. Flattened array + offset array: `neighbours_flat[total_neighbours], offsets[N+1]`
+   2. Fixed-size 2D array: `neighbours[N, max_neighbours]` with sentinel values
+   - Choose based on memory constraints and neighbour count distribution
 
 ### Newtonian Gravity and N-body Interactions
 
@@ -158,16 +158,16 @@ Represent particle state as **dense contiguous arrays** (already present in CPU 
      - If you reject a matrix-style approach, document why (e.g., memory footprint, O(N²) cost, worse cache behavior).
      - If you implement both, compare performance and keep faster as default.
 
-### SPH Neighbor Interactions
+### SPH Neighbour Interactions
 
-1. **Store neighbor lists** as dense or batched structures that allow coalesced access and vectorized operations.
+1. **Store neighbour lists** as dense or batched structures that allow coalesced access and vectorized operations.
 
 2. **Implement density, pressure, and force loops as fused kernels** over these arrays:
    - Combine density estimation + pressure computation + force accumulation where possible
    - Minimize separate kernel launches (each launch has ~10μs overhead)
 
 3. **Kernel function evaluations**:
-   - Pre-compute kernel values/gradients if neighbor lists are persistent
+   - Pre-compute kernel values/gradients if neighbour lists are persistent
    - Or compute on-the-fly if memory-constrained
    - Document trade-off in `NOTES.md`
 
@@ -227,7 +227,7 @@ c. **Choose CUDA framework**:
 a. **Move hot loops** into CUDA kernels:
    - SPH density estimation
    - Pressure/force computation
-   - Neighbor search
+   - Neighbour search
    - Gravity force summation
    - Integration steps
 
@@ -573,7 +573,7 @@ For each CUDA module implementation, verify:
 | Module Type | CPU Implementation | CUDA Target | Interface |
 |-------------|-------------------|-------------|-----------|
 | Gravity | `gravity/newtonian.py` | `gravity/newtonian_cuda.py` | `GravitySolver` |
-| Neighbors | `sph/neighbours_cpu.py` | `sph/neighbours_gpu.py` | Function API |
+| Neighbours | `sph/neighbours_cpu.py` | `sph/neighbours_gpu.py` | Function API |
 | Hydro Forces | `sph/hydro_forces.py` | `sph/hydro_forces_cuda.py` | Function API |
 | Integration | `integration/leapfrog.py` | `integration/leapfrog_cuda.py` | `TimeIntegrator` |
 

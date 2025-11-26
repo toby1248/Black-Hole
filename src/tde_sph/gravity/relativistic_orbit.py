@@ -187,7 +187,7 @@ class RelativisticGravitySolver(GravitySolver):
             if velocities is None:
                 raise ValueError(
                     "velocities are required for GR mode (metric != None). "
-                    "Geodesic equation requires 4-velocity."
+                    "Provide Cartesian 3-velocity components."
                 )
 
             velocities = velocities.astype(np.float32)
@@ -260,50 +260,13 @@ class RelativisticGravitySolver(GravitySolver):
 
         Notes
         -----
-        The Metric.geodesic_acceleration() method expects:
-        - positions: (N, 3) in Cartesian
-        - 4-velocity: (N, 4) as (u^t, u^x, u^y, u^z)
-
-        We construct the 4-velocity from 3-velocity assuming:
-        - Coordinate time parametrization: u^μ = dx^μ/dt
-        - Normalization: g_μν u^μ u^ν = -c² (c=1 in geometric units)
-
-        For weak-field/slow-motion limit: u^t ≈ 1, u^i ≈ v^i
-        For full GR near BH: Metric should normalize 4-velocity internally.
+        Metric.geodesic_acceleration() expects Cartesian positions and
+        velocities and handles coordinate transformations internally.
         """
-        N = len(positions)
-
-        # Convert positions and velocities to FP64 for metric evaluation
-        # (higher precision near horizon)
         positions_fp64 = positions.astype(np.float64)
         velocities_fp64 = velocities.astype(np.float64)
 
-        # Construct 4-velocity (metric should handle normalization)
-        # For now, use simple approach: u^0 ≈ 1, u^i = v^i
-        # More sophisticated: solve g_μν u^μ u^ν = -1 for u^0
-
-        # Compute u^t from normalization condition (if metric supports it)
-        # For simplicity in Phase 2, assume metric.geodesic_acceleration
-        # handles 3-velocity input or constructs 4-velocity internally.
-
-        # Call metric's geodesic acceleration
-        # Signature: geodesic_acceleration(x, v) where v can be 3-velocity or 4-velocity
-        # Check metric interface - it expects 4-velocity (N, 4)
-
-        # Construct 4-velocity: (u^t, u^x, u^y, u^z)
-        # Simple approximation: u^t = 1 / sqrt(1 - v²/c²) ≈ 1 for v << c
-        v_squared = np.sum(velocities_fp64**2, axis=1, keepdims=True)
-        gamma = 1.0 / np.sqrt(np.maximum(1.0 - v_squared, 1e-10))  # Lorentz factor
-
-        u_t = gamma  # Shape: (N, 1)
-        u_spatial = gamma * velocities_fp64  # Shape: (N, 3)
-
-        # Combine into 4-velocity
-        four_velocity = np.hstack([u_t, u_spatial])  # Shape: (N, 4)
-
-        # Call metric's geodesic acceleration
-        # This returns spatial acceleration (N, 3)
-        accel = metric.geodesic_acceleration(positions_fp64, four_velocity)
+        accel = metric.geodesic_acceleration(positions_fp64, velocities_fp64)
 
         return accel.astype(np.float32)
 

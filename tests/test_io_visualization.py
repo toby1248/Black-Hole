@@ -21,13 +21,16 @@ class TestHDF5Writer:
     def sample_particles(self):
         """Create sample particle data for testing."""
         n = 1000
+        velocities = np.random.randn(n, 3).astype(np.float32)
         return {
             'positions': np.random.randn(n, 3).astype(np.float32),
-            'velocities': np.random.randn(n, 3).astype(np.float32),
+            'velocities': velocities,
             'masses': np.ones(n, dtype=np.float32) * 1e-4,
             'density': np.random.rand(n).astype(np.float32) * 1e3,
             'internal_energy': np.random.rand(n).astype(np.float32) * 1e5,
             'smoothing_length': np.ones(n, dtype=np.float32) * 0.1,
+            'temperature': np.random.rand(n).astype(np.float32) * 1e6,
+            'velocity_magnitude': np.linalg.norm(velocities, axis=1).astype(np.float32),
         }
 
     @pytest.fixture

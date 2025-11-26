@@ -272,6 +272,102 @@ def velocity_bl_to_cartesian(
     return np.stack([vx, vy, vz], axis=-1)
 
 
+def acceleration_bl_to_cartesian(
+    r: np.ndarray,
+    theta: np.ndarray,
+    phi: np.ndarray,
+    v_r: np.ndarray,
+    v_theta: np.ndarray,
+    v_phi: np.ndarray,
+    a_r: np.ndarray,
+    a_theta: np.ndarray,
+    a_phi: np.ndarray
+) -> np.ndarray:
+    """
+    Transform acceleration from Boyer-Lindquist (spherical) to Cartesian coordinates.
+
+    Computes d²x/dt² given spherical coordinates, velocities, and accelerations.
+    Includes all Coriolis and centrifugal terms.
+
+    Parameters
+    ----------
+    r, theta, phi : np.ndarray
+        Position in spherical coordinates.
+    v_r, v_theta, v_phi : np.ndarray
+        Velocity in spherical coordinates (dr/dt, dθ/dt, dφ/dt).
+    a_r, a_theta, a_phi : np.ndarray
+        Acceleration in spherical coordinates (d²r/dt², d²θ/dt², d²φ/dt²).
+
+    Returns
+    -------
+    a_cart : np.ndarray, shape (..., 3)
+        Acceleration in Cartesian coordinates (d²x/dt², d²y/dt², d²z/dt²).
+    """
+    sin_theta = np.sin(theta)
+    cos_theta = np.cos(theta)
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+
+    # Precompute common velocity products
+    r_vtheta = r * v_theta
+    r_vphi_sin = r * v_phi * sin_theta
+    
+    # First derivatives of basis vectors (implicitly handled by expansion)
+    
+    # x = r sin(θ) cos(φ)
+    # vx = vr sin(θ) cos(φ) + r vθ cos(θ) cos(φ) - r vφ sin(θ) sin(φ)
+    # ax = d(vx)/dt
+    
+    # Term 1: d(vr sin(θ) cos(φ))/dt
+    # = ar sin(θ) cos(φ) + vr vθ cos(θ) cos(φ) - vr vφ sin(θ) sin(φ)
+    t1_x = a_r * sin_theta * cos_phi + v_r * v_theta * cos_theta * cos_phi - v_r * v_phi * sin_theta * sin_phi
+    
+    # Term 2: d(r vθ cos(θ) cos(φ))/dt
+    # = (vr vθ + r aθ) cos(θ) cos(φ) - r vθ² sin(θ) cos(φ) - r vθ vφ cos(θ) sin(φ)
+    t2_x = (v_r * v_theta + r * a_theta) * cos_theta * cos_phi - \
+           r * v_theta**2 * sin_theta * cos_phi - \
+           r * v_theta * v_phi * cos_theta * sin_phi
+           
+    # Term 3: d(-r vφ sin(θ) sin(φ))/dt
+    # = -(vr vφ + r aφ) sin(θ) sin(φ) - r vφ vθ cos(θ) sin(φ) - r vφ² sin(θ) cos(φ)
+    t3_x = -(v_r * v_phi + r * a_phi) * sin_theta * sin_phi - \
+           r * v_phi * v_theta * cos_theta * sin_phi - \
+           r * v_phi**2 * sin_theta * cos_phi
+           
+    ax = t1_x + t2_x + t3_x
+    
+    # y = r sin(θ) sin(φ)
+    # vy = vr sin(θ) sin(φ) + r vθ cos(θ) sin(φ) + r vφ sin(θ) cos(φ)
+    
+    # Term 1: d(vr sin(θ) sin(φ))/dt
+    t1_y = a_r * sin_theta * sin_phi + v_r * v_theta * cos_theta * sin_phi + v_r * v_phi * sin_theta * cos_phi
+    
+    # Term 2: d(r vθ cos(θ) sin(φ))/dt
+    t2_y = (v_r * v_theta + r * a_theta) * cos_theta * sin_phi - \
+           r * v_theta**2 * sin_theta * sin_phi + \
+           r * v_theta * v_phi * cos_theta * cos_phi
+           
+    # Term 3: d(r vφ sin(θ) cos(φ))/dt
+    t3_y = (v_r * v_phi + r * a_phi) * sin_theta * cos_phi + \
+           r * v_phi * v_theta * cos_theta * cos_phi - \
+           r * v_phi**2 * sin_theta * sin_phi
+           
+    ay = t1_y + t2_y + t3_y
+    
+    # z = r cos(θ)
+    # vz = vr cos(θ) - r vθ sin(θ)
+    
+    # Term 1: d(vr cos(θ))/dt
+    t1_z = a_r * cos_theta - v_r * v_theta * sin_theta
+    
+    # Term 2: d(-r vθ sin(θ))/dt
+    t2_z = -(v_r * v_theta + r * a_theta) * sin_theta - r * v_theta**2 * cos_theta
+    
+    az = t1_z + t2_z
+    
+    return np.stack([ax, ay, az], axis=-1)
+
+
 def check_coordinate_validity(
     r: Union[np.ndarray, float],
     theta: Union[np.ndarray, float],

@@ -1,0 +1,1 @@
+python tools/convert_hdf5_to_webjson.py gui/outputs/snapshot_*.h5 -o web/data/ --stride 1 --threads 15

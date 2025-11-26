@@ -161,8 +161,8 @@ class MinkowskiMetric(Metric):
         ----------
         x : np.ndarray, shape (N, 3) or (3,)
             Spatial position (x, y, z).
-        v : np.ndarray, shape (N, 4) or (4,)
-            4-velocity (u^t, u^x, u^y, u^z).
+        v : np.ndarray, shape (N, 3) or (3,)
+            Cartesian 3-velocity (dx/dt, dy/dt, dz/dt).
 
         Returns
         -------
@@ -183,16 +183,14 @@ class MinkowskiMetric(Metric):
 
         if x.shape[-1] != 3:
             raise ValueError(f"Position last dimension must be 3, got shape {x.shape}")
-        if v.shape[-1] != 4:
-            raise ValueError(f"4-velocity last dimension must be 4, got shape {v.shape}")
+        if v.shape[-1] != 3:
+            raise ValueError(f"Velocity last dimension must be 3, got shape {v.shape}")
 
         if is_single:
-            a = np.zeros(3, dtype=np.float32)
-        else:
-            n_particles = x.shape[0]
-            a = np.zeros((n_particles, 3), dtype=np.float32)
+            return np.zeros(3, dtype=np.float32)
 
-        return a
+        n_particles = x.shape[0]
+        return np.zeros((n_particles, 3), dtype=np.float32)
 
     def isco_radius(self) -> float:
         """

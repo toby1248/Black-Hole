@@ -20,9 +20,14 @@ black_hole:
   mass: 1.0  # In code units (G=c=M_BH=1)
   spin: 0.0  # Schwarzschild: no spin
 
+orbit:
+  pericentre: 4.0   # In units of tidal radius
+  eccentricity: 0.95  # Orbital eccentricity (0=circular, 1=parabolic)
+  starting_distance: 3.0  # Initial position in units of periapsis
+
 metric:
   type: "schwarzschild"
-  coordinate_system: "cartesian"
+  coordinate_system: "cartesian"  # Internal coordinates; Kerr in Boyer-Lindquist
 
 integration:
   use_hamiltonian_integrator: false  # Set true for high-accuracy near ISCO

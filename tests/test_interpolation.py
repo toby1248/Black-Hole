@@ -466,7 +466,7 @@ class TestSmoothingFilters:
         # Smoothed data should spread out spike
         assert smoothed.shape == data.shape
         assert smoothed[8, 8, 8] < 1.0  # Peak reduced
-        assert smoothed[7, 8, 8] > 0.0  # Neighbors increased
+        assert smoothed[7, 8, 8] > 0.0  # Neighbours increased
 
     def test_median_filter_3d(self):
         """Test 3D median filter."""

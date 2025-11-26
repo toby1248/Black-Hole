@@ -21,7 +21,7 @@ try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
         QProgressBar, QLabel, QTextEdit, QSpinBox, QDoubleSpinBox,
-        QFormLayout
+        QFormLayout, QCheckBox
     )
     from PyQt6.QtCore import Qt, QTimer, pyqtSignal
     from PyQt6.QtGui import QFont
@@ -30,7 +30,7 @@ except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton,
         QProgressBar, QLabel, QTextEdit, QSpinBox, QDoubleSpinBox,
-        QFormLayout
+        QFormLayout, QCheckBox
     )
     from PyQt5.QtCore import Qt, QTimer, pyqtSignal
     from PyQt5.QtGui import QFont
@@ -59,6 +59,9 @@ class ControlPanelWidget(QWidget):
     stop_requested = pyqtSignal()
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
+    chart_updates_toggled = pyqtSignal(bool)  # Emitted when chart update checkbox is toggled
+    detailed_diagnostics_toggled = pyqtSignal(bool)  # Emitted when detailed diagnostics is toggled
+    live_data_interval_changed = pyqtSignal(int)  # Emitted when live data interval changes
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -137,6 +140,44 @@ class ControlPanelWidget(QWidget):
         )
         self.stop_button.clicked.connect(self._on_stop_clicked)
         layout.addWidget(self.stop_button)
+
+        # Chart update toggle
+        self.chart_update_checkbox = QCheckBox("Enable Live Charts")
+        self.chart_update_checkbox.setChecked(True)
+        self.chart_update_checkbox.setToolTip(
+            "Disable to improve performance during long simulations.\n"
+            "Charts will not update while disabled."
+        )
+        self.chart_update_checkbox.stateChanged.connect(self._on_chart_toggle_changed)
+        layout.addWidget(self.chart_update_checkbox)
+        
+        # Detailed diagnostics toggle
+        self.detailed_diagnostics_checkbox = QCheckBox("Detailed Diagnostics")
+        self.detailed_diagnostics_checkbox.setChecked(True)
+        self.detailed_diagnostics_checkbox.setToolTip(
+            "Disable to skip expensive calculations:\n"
+            "• Percentile computations (distance, energy)\n"
+            "• Per-particle potential energy (O(N²))\n"
+            "Can improve performance by 10-100× for large N"
+        )
+        self.detailed_diagnostics_checkbox.stateChanged.connect(self._on_detailed_diagnostics_changed)
+        layout.addWidget(self.detailed_diagnostics_checkbox)
+        
+        # Live data update interval
+        interval_layout = QHBoxLayout()
+        interval_layout.addWidget(QLabel("Live Data Every:"))
+        self.live_data_interval_spinbox = QSpinBox()
+        self.live_data_interval_spinbox.setRange(1, 1000)
+        self.live_data_interval_spinbox.setValue(10)
+        self.live_data_interval_spinbox.setSuffix(" steps")
+        self.live_data_interval_spinbox.setToolTip(
+            "How often to update live data display.\n"
+            "Higher values = faster simulation, less frequent updates."
+        )
+        self.live_data_interval_spinbox.valueChanged.connect(self._on_live_data_interval_changed)
+        interval_layout.addWidget(self.live_data_interval_spinbox)
+        interval_layout.addStretch()
+        layout.addLayout(interval_layout)
 
         group.setLayout(layout)
         return group
@@ -258,6 +299,25 @@ class ControlPanelWidget(QWidget):
     def _on_stop_clicked(self):
         """Handle Stop button click."""
         self.stop_requested.emit()
+
+    def _on_chart_toggle_changed(self, state):
+        """Handle chart update checkbox toggle."""
+        enabled = (state == Qt.CheckState.Checked.value if PYQT_VERSION == 6 else state == Qt.Checked)
+        self.chart_updates_toggled.emit(enabled)
+        status = "enabled" if enabled else "disabled"
+        self.log(f"Live chart updates {status}")
+    
+    def _on_detailed_diagnostics_changed(self, state):
+        """Handle detailed diagnostics checkbox toggle."""
+        enabled = (state == Qt.CheckState.Checked.value if PYQT_VERSION == 6 else state == Qt.Checked)
+        self.detailed_diagnostics_toggled.emit(enabled)
+        status = "enabled" if enabled else "disabled"
+        self.log(f"Detailed diagnostics {status}")
+    
+    def _on_live_data_interval_changed(self, value):
+        """Handle live data interval change."""
+        self.live_data_interval_changed.emit(value)
+        self.log(f"Live data interval: every {value} steps")
 
     # -------------------------------------------------------------------------
     # Public methods (called by main window)
@@ -387,19 +447,29 @@ class ControlPanelWidget(QWidget):
         if self.current_time >= self.total_time:
             self.on_simulation_finished()
 
-    def set_progress(self, time: float, step: int):
+    def set_progress(self, time: float, step: int, progress_info: dict = None):
         """
         Manually set progress (called from actual simulation).
 
         Parameters:
             time: Current simulation time
             step: Current step number
+            progress_info: Dictionary with timing and progress information
         """
         self.current_time = time
         self.current_step = step
 
-        progress = int(100 * time / self.total_time)
+        # Update from progress_info if provided
+        if progress_info:
+            if 'total_time' in progress_info:
+                self.total_time = progress_info['total_time']
+            if 'timing_ms' in progress_info:
+                timings = progress_info['timing_ms']
+                # Update timing display in diagnostics table if it exists
+                # (will be handled by data_display widget)
+
+        progress = int(100 * time / self.total_time) if self.total_time > 0 else 0
         self.progress_bar.setValue(min(progress, 100))
 
         self.time_label.setText(f"{time:.2f} / {self.total_time:.2f}")
-        self.step_label.setText(f"{step} / {self.total_steps}")
+        self.step_label.setText(f"{step}")

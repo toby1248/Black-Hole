@@ -206,6 +206,8 @@ def compute_hydro_acceleration(
     Implements the standard SPH momentum and energy equations with
     artificial viscosity (Monaghan 1997, Price 2012).
     """
+    n_particles = positions.shape[0]
+    
     # Try Numba implementation first
     if HAS_NUMBA:
         # Convert neighbour lists to flat arrays
@@ -240,7 +242,6 @@ def compute_hydro_acceleration(
                  return np.zeros((n_particles, 3), dtype=np.float32), np.zeros(n_particles, dtype=np.float32)
     
     # Fallback to original implementation
-    n_particles = positions.shape[0]
     accel = np.zeros((n_particles, 3), dtype=np.float32)
     du_dt = np.zeros(n_particles, dtype=np.float32)
 

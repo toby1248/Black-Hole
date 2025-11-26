@@ -348,6 +348,9 @@ class TDESPHMainWindow(QMainWindow):
             self.control_panel.stop_requested.connect(self.stop_simulation)
             self.control_panel.pause_requested.connect(self.pause_simulation)
             self.control_panel.resume_requested.connect(self.resume_simulation)
+            self.control_panel.chart_updates_toggled.connect(self._on_chart_updates_toggled)
+            self.control_panel.detailed_diagnostics_toggled.connect(self._on_detailed_diagnostics_toggled)
+            self.control_panel.live_data_interval_changed.connect(self._on_live_data_interval_changed)
 
         if self.config_editor is not None:
             self.config_editor.config_modified.connect(self._on_config_modified)
@@ -413,7 +416,8 @@ particles:
 
 integration:
   timestep: 0.01
-  t_end: 100.0
+  t_end: 100000.0
+  cfl_factor: 1.0
   output_interval: 1.0
 
 physics:
@@ -630,10 +634,25 @@ physics:
         if SimulationThread is not None:
             self.sim_thread = SimulationThread(config)
             self.sim_thread.progress_updated.connect(self._on_progress_updated)
+            self.sim_thread.live_data_updated.connect(self._on_live_data_updated)
             self.sim_thread.simulation_finished.connect(self._on_simulation_finished)
             self.sim_thread.simulation_stopped.connect(self._on_simulation_stopped)
             self.sim_thread.simulation_error.connect(self._on_simulation_error)
             self.sim_thread.log_message.connect(self._on_log_message)
+            
+            # Apply current performance settings
+            if self.control_panel:
+                self.sim_thread.set_detailed_diagnostics(
+                    self.control_panel.detailed_diagnostics_checkbox.isChecked()
+                )
+                self.sim_thread.set_live_data_interval(
+                    self.control_panel.live_data_interval_spinbox.value()
+                )
+            
+            # Check if data display is visible
+            if self.data_display:
+                # Assume visible initially (can be enhanced with actual visibility check)
+                self.sim_thread.set_data_display_visible(True)
             
             self.sim_thread.start()
             
@@ -680,11 +699,13 @@ physics:
             self.sim_thread.resume()
             self.statusBar().showMessage("Simulation resumed", 3000)
 
-    def _on_progress_updated(self, time, step, energies, stats):
-        """Handle progress updates from simulation thread."""
+    def _on_progress_updated(self, time, step, progress_info):
+        """Handle lightweight progress updates from simulation thread."""
         if self.control_panel:
-            self.control_panel.set_progress(time, step)
-            
+            self.control_panel.set_progress(time, step, progress_info)
+    
+    def _on_live_data_updated(self, time, step, energies, stats):
+        """Handle expensive live data updates from simulation thread."""
         if self.data_display:
             self.data_display.update_live_data(time, energies, stats)
 
@@ -755,6 +776,21 @@ physics:
             self.setWindowTitle(f"TDE-SPH Simulator - {self.current_config_file.name}*")
         else:
             self.setWindowTitle("TDE-SPH Simulator - New Configuration*")
+
+    def _on_chart_updates_toggled(self, enabled: bool):
+        """Handle chart updates toggle."""
+        if self.data_display is not None:
+            self.data_display.set_chart_updates_enabled(enabled)
+    
+    def _on_detailed_diagnostics_toggled(self, enabled: bool):
+        """Handle detailed diagnostics toggle."""
+        if self.sim_thread:
+            self.sim_thread.set_detailed_diagnostics(enabled)
+    
+    def _on_live_data_interval_changed(self, interval: int):
+        """Handle live data interval change."""
+        if self.sim_thread:
+            self.sim_thread.set_live_data_interval(interval)
 
     def closeEvent(self, event):
         """Handle window close event."""

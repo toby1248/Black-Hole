@@ -216,6 +216,63 @@ def _compute_accel_tree(positions, masses, smoothing_lengths, G, theta,
         
     return accel
 
+
+@njit(parallel=True, fastmath=True)
+def _compute_potential_tree(positions, masses, smoothing_lengths, G, theta,
+                            child_ptr, node_mass, node_com, leaf_particle, box_size, n_nodes):
+    """Compute potential using Barnes-Hut tree walk."""
+    N = len(positions)
+    potential = np.zeros(N, dtype=np.float32)
+
+    for i in prange(N):
+        potential[i] = _walk_potential_recursive(
+            positions[i, 0], positions[i, 1], positions[i, 2],
+            smoothing_lengths[i],
+            0,  # root
+            G, theta,
+            child_ptr, node_mass, node_com, leaf_particle, box_size,
+            i
+        )
+
+    return potential
+
+
+@njit(fastmath=True)
+def _walk_potential_recursive(px, py, pz, h_i, node_idx, G, theta,
+                              child_ptr, node_mass, node_com, leaf_particle, box_size, p_idx):
+    """Recursive tree walk for potential calculation."""
+    phi = 0.0
+
+    dx = px - node_com[node_idx, 0]
+    dy = py - node_com[node_idx, 1]
+    dz = pz - node_com[node_idx, 2]
+    r2 = dx*dx + dy*dy + dz*dz
+    r = np.sqrt(r2)
+
+    if leaf_particle[node_idx] != -1:
+        idx = leaf_particle[node_idx]
+        if idx != p_idx:
+            eps = h_i
+            r_soft = np.sqrt(r2 + eps*eps)
+            phi += -G * node_mass[node_idx] / r_soft
+        return phi
+
+    s = box_size[node_idx]
+    if r > 0.0 and (s / r) < theta:
+        eps = h_i
+        r_soft = np.sqrt(r2 + eps*eps)
+        phi += -G * node_mass[node_idx] / r_soft
+    else:
+        for k in range(8):
+            child = child_ptr[node_idx, k]
+            if child != -1:
+                phi += _walk_potential_recursive(
+                    px, py, pz, h_i, child, G, theta,
+                    child_ptr, node_mass, node_com, leaf_particle, box_size, p_idx
+                )
+
+    return phi
+
 @njit(fastmath=True)
 def _walk_tree_recursive(px, py, pz, h_i, node_idx, G, theta,
                         child_ptr, node_mass, node_com, leaf_particle, box_size, p_idx):
@@ -294,6 +351,29 @@ class BarnesHutGravity(GravitySolver):
     def __init__(self, G: float = 1.0, theta: float = 0.5):
         self.G = np.float32(G)
         self.theta = np.float32(theta)
+        # Store last tree data for reuse in TreeSPH neighbour search
+        self.last_tree_data = None
+        
+    def get_tree_data(self):
+        """
+        Get the octree data from the last tree build.
+        
+        Returns
+        -------
+        dict or None
+            Dictionary containing:
+            - 'child_ptr': array (n_nodes, 8) - child pointers
+            - 'leaf_particle': array (n_nodes,) - particle index for leaf nodes
+            - 'box_centers': array (n_nodes, 3) - bounding box centers
+            - 'box_sizes': array (n_nodes,) - bounding box sizes
+            Or None if tree hasn't been built yet.
+        
+        Notes
+        -----
+        This data can be used for TreeSPH neighbour search to reuse the
+        octree built for gravity calculations.
+        """
+        return self.last_tree_data
         
     def compute_acceleration(
         self,
@@ -311,16 +391,23 @@ class BarnesHutGravity(GravitySolver):
         max_nodes = N * MAX_NODES_FACTOR
         
         # Build Tree
-        child_ptr, node_mass, node_com, leaf_particle, box_size, _, n_nodes = _build_tree(
+        child_ptr, node_mass, node_com, leaf_particle, box_center, box_size, n_nodes = _build_tree(
             positions, masses, N, max_nodes
         )
         
         if n_nodes == -1:
             raise RuntimeError(f"Barnes-Hut tree overflowed. Max nodes: {max_nodes}")
-            
-        # Debug prints
-        print(f"BH Tree built: {n_nodes} nodes. Root mass: {node_mass[0]}")
-
+        
+        # Store tree data for TreeSPH neighbour search and smoothing length updates
+        self.last_tree_data = {
+            'child_ptr': child_ptr[:n_nodes].copy(),
+            'node_mass': node_mass[:n_nodes].copy(),
+            'node_com': node_com[:n_nodes].copy(),
+            'leaf_particle': leaf_particle[:n_nodes].copy(),
+            'box_centers': box_center[:n_nodes].copy(),
+            'box_sizes': box_size[:n_nodes].copy(),
+            'gpu': False  # CPU tree
+        }
             
         # Compute Forces
         accel = _compute_accel_tree(
@@ -331,6 +418,34 @@ class BarnesHutGravity(GravitySolver):
         return accel
 
     def compute_potential(self, positions, masses, smoothing_lengths):
-        # TODO: Implement potential calculation using tree
-        return np.zeros(len(positions), dtype=np.float32)
+        positions = positions.astype(np.float32)
+        masses = masses.astype(np.float32)
+        smoothing_lengths = smoothing_lengths.astype(np.float32)
 
+        N = len(positions)
+        max_nodes = N * MAX_NODES_FACTOR
+
+        child_ptr, node_mass, node_com, leaf_particle, box_center, box_size, n_nodes = _build_tree(
+            positions, masses, N, max_nodes
+        )
+
+        if n_nodes == -1:
+            raise RuntimeError(f"Barnes-Hut tree overflowed. Max nodes: {max_nodes}")
+
+        # Store tree data for TreeSPH neighbour search and smoothing length updates
+        self.last_tree_data = {
+            'child_ptr': child_ptr[:n_nodes].copy(),
+            'node_mass': node_mass[:n_nodes].copy(),
+            'node_com': node_com[:n_nodes].copy(),
+            'leaf_particle': leaf_particle[:n_nodes].copy(),
+            'box_centers': box_center[:n_nodes].copy(),
+            'box_sizes': box_size[:n_nodes].copy(),
+            'gpu': False  # CPU tree
+        }
+
+        potential = _compute_potential_tree(
+            positions, masses, smoothing_lengths, self.G, self.theta,
+            child_ptr, node_mass, node_com, leaf_particle, box_size, n_nodes
+        )
+
+        return potential

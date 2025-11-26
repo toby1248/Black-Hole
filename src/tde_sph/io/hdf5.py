@@ -101,6 +101,7 @@ class HDF5Writer:
             - 'acceleration': shape (N, 3) - current acceleration
             - 'temperature': shape (N,) - temperature
             - 'pressure': shape (N,) - pressure
+            - 'velocity_magnitude': shape (N,) - |v| cached for diagnostics
         time : float
             Current simulation time (in code units).
         metadata : Dict[str, Any], optional

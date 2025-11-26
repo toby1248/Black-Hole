@@ -55,8 +55,8 @@ def estimate_timestep_gr(
         - isco_factor : float, default 0.05 (GR only)
         - isco_radius_threshold : float, default 10.0 (in units of M)
         - bh_mass : float, default 1.0
-        - min_dt : float, optional absolute minimum
-        - max_dt : float, optional absolute maximum
+        - dt_min (or min_dt) : float, optional absolute minimum
+        - dt_max (or max_dt) : float, optional absolute maximum
     **kwargs
         Additional parameters:
         - accelerations : NDArrayFloat, shape (N, 3)
@@ -90,23 +90,29 @@ def estimate_timestep_gr(
 
     if not isinstance(config, dict):
         # Convert config object to dict
-        cfl_factor = getattr(config, 'cfl_factor', 0.3)
+        cfl_factor = getattr(config, 'cfl_factor', 1.0)
         accel_factor = getattr(config, 'accel_factor', 0.25)
         orbital_factor = getattr(config, 'orbital_factor', 0.1)
         isco_factor = getattr(config, 'isco_factor', 0.05)
         isco_radius_threshold = getattr(config, 'isco_radius_threshold', 10.0)
         bh_mass = getattr(config, 'bh_mass', 1.0)
-        min_dt = getattr(config, 'min_dt', None)
-        max_dt = getattr(config, 'max_dt', None)
+        min_dt = getattr(config, 'dt_min', getattr(config, 'min_dt', None))
+        max_dt = getattr(config, 'dt_max', getattr(config, 'max_dt', None))
     else:
-        cfl_factor = config.get('cfl_factor', 0.3)
+        cfl_factor = config.get('cfl_factor', 1.0)
         accel_factor = config.get('accel_factor', 0.25)
         orbital_factor = config.get('orbital_factor', 0.1)
         isco_factor = config.get('isco_factor', 0.05)
         isco_radius_threshold = config.get('isco_radius_threshold', 10.0)
         bh_mass = config.get('bh_mass', 1.0)
-        min_dt = config.get('min_dt', None)
-        max_dt = config.get('max_dt', None)
+        min_dt = config.get('dt_min', config.get('min_dt', None))
+        max_dt = config.get('dt_max', config.get('max_dt', None))
+
+    # Allow kwargs override (e.g., from Simulation.step)
+    if 'min_dt' in kwargs and kwargs['min_dt'] is not None:
+        min_dt = kwargs['min_dt']
+    if 'max_dt' in kwargs and kwargs['max_dt'] is not None:
+        max_dt = kwargs['max_dt']
 
     # Working precision
     dtype = np.float32
@@ -389,14 +395,14 @@ def get_timestep_diagnostics(
         config = {}
 
     if not isinstance(config, dict):
-        cfl_factor = getattr(config, 'cfl_factor', 0.3)
+        cfl_factor = getattr(config, 'cfl_factor', 1.0)
         accel_factor = getattr(config, 'accel_factor', 0.25)
         orbital_factor = getattr(config, 'orbital_factor', 0.1)
         isco_factor = getattr(config, 'isco_factor', 0.05)
         isco_radius_threshold = getattr(config, 'isco_radius_threshold', 10.0)
         bh_mass = getattr(config, 'bh_mass', 1.0)
     else:
-        cfl_factor = config.get('cfl_factor', 0.3)
+        cfl_factor = config.get('cfl_factor', 1.0)
         accel_factor = config.get('accel_factor', 0.25)
         orbital_factor = config.get('orbital_factor', 0.1)
         isco_factor = config.get('isco_factor', 0.05)
