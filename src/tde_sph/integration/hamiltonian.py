@@ -303,21 +303,13 @@ class HamiltonianIntegrator(TimeIntegrator):
         accel : np.ndarray, shape (N, 3)
             Spatial geodesic acceleration.
         """
-        # Convert 4-momenta to 4-velocities (u^μ = p^μ / m, with m=1)
-        # For now, use simple approximation
-        u = p.copy()
+        # Convert 4-momenta to coordinate 3-velocities
+        v_coord = self._momentum_to_velocity(x, p, dtype)
 
-        # Build full 4-velocity (including time component)
-        # Shape: (N, 4)
-        u_four = np.zeros((len(x), 4), dtype=dtype)
-        u_four[:, 0] = -p[:, 0]  # u^t (contravariant)
-        u_four[:, 1:] = p[:, 1:]  # u^i
-
-        # Use metric's geodesic_acceleration method
-        # This returns spatial acceleration a^i
+        # Use metric's geodesic_acceleration method with Cartesian inputs
         accel = self.metric.geodesic_acceleration(
             x.astype(np.float32),
-            u_four.astype(np.float32)
+            v_coord.astype(np.float32)
         ).astype(dtype)
 
         return accel
@@ -413,7 +405,9 @@ class HamiltonianIntegrator(TimeIntegrator):
                 'orbital_factor': 0.1,
                 'isco_factor': 0.05,
                 'isco_radius_threshold': getattr(config, 'isco_radius_threshold', 10.0),
-                'bh_mass': getattr(config, 'bh_mass', 1.0)
+                'bh_mass': getattr(config, 'bh_mass', 1.0),
+                'dt_min': getattr(config, 'dt_min', getattr(config, 'min_dt', None)),
+                'dt_max': getattr(config, 'dt_max', getattr(config, 'max_dt', None))
             }
         else:
             config.setdefault('cfl_factor', cfl_factor)
@@ -422,6 +416,10 @@ class HamiltonianIntegrator(TimeIntegrator):
             config.setdefault('isco_factor', 0.05)
             config.setdefault('isco_radius_threshold', 10.0)
             config.setdefault('bh_mass', 1.0)
+            if 'dt_min' not in config and 'min_dt' in config:
+                config['dt_min'] = config['min_dt']
+            if 'dt_max' not in config and 'max_dt' in config:
+                config['dt_max'] = config['max_dt']
 
         dt = estimate_timestep_gr(
             particles=particles,

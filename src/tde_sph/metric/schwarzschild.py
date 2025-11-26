@@ -20,7 +20,8 @@ import warnings
 from tde_sph.core.interfaces import Metric
 from tde_sph.metric.coordinates import (
     cartesian_to_bl_spherical,
-    bl_spherical_to_cartesian,
+    velocity_cartesian_to_bl,
+    acceleration_bl_to_cartesian,
     check_coordinate_validity,
     EPS_COORD
 )
@@ -287,102 +288,79 @@ class SchwarzschildMetric(Metric):
 
     def geodesic_acceleration(self, x: np.ndarray, v: np.ndarray) -> np.ndarray:
         """
-        Compute spatial geodesic acceleration from geodesic equation.
+        Compute spatial geodesic acceleration from Cartesian inputs.
 
         Parameters
         ----------
         x : np.ndarray, shape (N, 3) or (3,)
             Spatial position in Cartesian coordinates.
-        v : np.ndarray, shape (N, 4) or (4,)
-            4-velocity in Boyer-Lindquist coordinates (u^t, u^r, u^θ, u^φ).
-            Note: For integration, these should satisfy g_μν u^μ u^ν = -1.
+        v : np.ndarray, shape (N, 3) or (3,)
+            Cartesian 3-velocity (dx/dt, dy/dt, dz/dt).
 
         Returns
         -------
         a : np.ndarray, shape (N, 3) or (3,)
-            Spatial acceleration in Cartesian coordinates (a^x, a^y, a^z).
-
-        Notes
-        -----
-        Geodesic equation:
-            d²x^μ/dτ² = -Γ^μ_νρ (dx^ν/dτ)(dx^ρ/dτ)
-
-        We compute acceleration in spherical coordinates, then transform
-        back to Cartesian for SPH integration.
-
-        For numerical stability, we use the explicit forms:
-            a^r = [terms from Γ^r_νρ]
-            a^θ = [terms from Γ^θ_νρ]
-            a^φ = [terms from Γ^φ_νρ]
-
-        Reference: Tejeda et al. (2017), Appendix A
+            Spatial acceleration in Cartesian coordinates.
         """
-        x = np.atleast_1d(x)
-        v = np.atleast_1d(v)
+        x = np.asarray(x, dtype=np.float64)
+        v = np.asarray(v, dtype=np.float64)
+
         is_single = x.ndim == 1
+        if is_single:
+            x_arr = x[np.newaxis, :]
+            v_arr = v[np.newaxis, :]
+        else:
+            x_arr = x
+            v_arr = v
 
-        if x.shape[-1] != 3:
-            raise ValueError(f"Position must have shape (..., 3), got {x.shape}")
-        if v.shape[-1] != 4:
-            raise ValueError(f"4-velocity must have shape (..., 4), got {v.shape}")
-
-        # Convert position to spherical
-        r, theta, phi = cartesian_to_bl_spherical(x)
-
-        # Extract 4-velocity components
-        u_t = v[..., 0]
-        u_r = v[..., 1]
-        u_theta = v[..., 2]
-        u_phi = v[..., 3]
+        r, theta, phi = cartesian_to_bl_spherical(x_arr)
+        v_r, v_theta, v_phi = velocity_cartesian_to_bl(x_arr, v_arr)
 
         M = self.mass
         sin_theta = np.sin(theta)
         cos_theta = np.cos(theta)
-
-        # Protect against singularities
         sin_theta = np.where(np.abs(sin_theta) < EPS_COORD, EPS_COORD, sin_theta)
 
-        # Compute acceleration in spherical coordinates
-        # a^r = -Γ^r_νρ u^ν u^ρ
-        a_r = (M * (r - 2*M) / r**3) * u_t**2 \
-              + (M / (r * (r - 2*M))) * u_r**2 \
-              + (r - 2*M) * u_theta**2 \
-              + (r - 2*M) * sin_theta**2 * u_phi**2
+        f = 1.0 - 2.0 * M / r
 
-        # a^θ = -Γ^θ_νρ u^ν u^ρ
-        a_theta = -(2.0 / r) * u_r * u_theta \
-                  + sin_theta * cos_theta * u_phi**2
+        # Normalize 4-velocity
+        denom = -f + (1.0 / f) * v_r**2 + (r**2) * v_theta**2 + (r**2 * sin_theta**2) * v_phi**2
+        denom = np.where(denom < -1e-12, denom, -1e-12)
 
-        # a^φ = -Γ^φ_νρ u^ν u^ρ
-        a_phi = -(2.0 / r) * u_r * u_phi \
-                - (2.0 * cos_theta / sin_theta) * u_theta * u_phi
+        u_t = np.sqrt(-1.0 / denom)
+        u_r = v_r * u_t
+        u_theta = v_theta * u_t
+        u_phi = v_phi * u_t
 
-        # Transform back to Cartesian coordinates
-        # This requires the full Jacobian transformation
-        # For now, use simplified approach (TODO: implement full transformation)
+        # Geodesic equation components (Tejeda et al. 2017)
+        # d²xⁱ/dτ² = -Γⁱⱼₖ uʲ uᵏ
+        # Christoffel symbols for Schwarzschild:
+        # Γʳ_tt = M(r-2M)/r³, Γʳ_rr = -M/(r(r-2M)), Γʳ_θθ = -(r-2M), Γʳ_φφ = -(r-2M)sin²θ
+        a_r = -(M * (r - 2.0 * M) / r**3) * u_t**2 \
+              + (M / (r * (r - 2.0 * M))) * u_r**2 \
+              + (r - 2.0 * M) * u_theta**2 \
+              + (r - 2.0 * M) * sin_theta**2 * u_phi**2
 
-        # Convert spherical acceleration to Cartesian
-        # This is an approximation; full implementation should use velocity transformations
-        sin_phi = np.sin(phi)
-        cos_phi = np.cos(phi)
+        a_theta = -(2.0 / r) * u_r * u_theta + sin_theta * cos_theta * u_phi**2
 
-        # Transformation matrix components (simplified)
-        a_x = (a_r * sin_theta * cos_phi +
-               r * a_theta * cos_theta * cos_phi -
-               r * a_phi * sin_theta * sin_phi)
+        a_phi = -(2.0 / r) * u_r * u_phi - (2.0 * cos_theta / sin_theta) * u_theta * u_phi
 
-        a_y = (a_r * sin_theta * sin_phi +
-               r * a_theta * cos_theta * sin_phi +
-               r * a_phi * sin_theta * cos_phi)
-
-        a_z = a_r * cos_theta - r * a_theta * sin_theta
+        a_cart = acceleration_bl_to_cartesian(
+            r,
+            theta,
+            phi,
+            v_r,
+            v_theta,
+            v_phi,
+            a_r,
+            a_theta,
+            a_phi
+        )
 
         if is_single:
-            a = np.array([a_x, a_y, a_z], dtype=np.float32)
-        else:
-            a = np.stack([a_x, a_y, a_z], axis=-1).astype(np.float32)
+            return a_cart[0].astype(np.float32)
 
-        return a
+        return a_cart.astype(np.float32)
 
     def circular_orbit_velocity(self, r: float) -> Tuple[float, float]:
         """

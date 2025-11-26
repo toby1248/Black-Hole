@@ -280,7 +280,7 @@ class SmoothingFilters:
         """
         Apply 3D median filter (outlier removal).
 
-        Replaces each voxel with median of local neighborhood.
+        Replaces each voxel with median of local neighbourhood.
 
         Requires: scipy.ndimage
         """

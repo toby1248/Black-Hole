@@ -25,6 +25,11 @@ black_hole:
   mass: 1.0  # In code units (G=c=M_BH=1)
   spin: 0.9  # High spin: a/M = 0.9 (near maximal)
 
+orbit:
+  pericentre: 4.0   # In units of tidal radius
+  eccentricity: 0.95  # Orbital eccentricity (0=circular, 1=parabolic)
+  starting_distance: 3.0  # Initial position in units of periapsis
+
 metric:
   type: "kerr"
   coordinate_system: "cartesian"  # Internal coordinates; Kerr in Boyer-Lindquist

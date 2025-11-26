@@ -20,6 +20,7 @@ from tde_sph.gravity import (
     RelativisticGravitySolver,
     PseudoNewtonianGravity
 )
+from tde_sph.core.simulation import Simulation, SimulationConfig, SimulationState
 
 
 class TestNewtonianGravity:
@@ -106,6 +107,25 @@ class TestNewtonianGravity:
 
         # Should be zero (no other particles)
         np.testing.assert_allclose(accel, 0.0, atol=1e-7)
+
+    def test_central_bh_contribution(self):
+        """Newtonian solver should include optional central BH acceleration/potential."""
+        solver = NewtonianGravity(G=1.0, bh_mass=5.0)
+
+        positions = np.array([[2.0, 0.0, 0.0]], dtype=np.float32)
+        masses = np.zeros(1, dtype=np.float32)
+        smoothing = np.array([0.1], dtype=np.float32)
+
+        accel = solver.compute_acceleration(positions, masses, smoothing)
+        potential = solver.compute_potential(positions, masses, smoothing)
+
+        r_vec = positions[0]
+        r = np.linalg.norm(r_vec)
+        expected_accel = -solver.G * solver.bh_mass * r_vec / r**3
+        expected_phi = -solver.G * solver.bh_mass / r
+
+        np.testing.assert_allclose(accel[0], expected_accel, rtol=1e-5)
+        np.testing.assert_allclose(potential[0], expected_phi, rtol=1e-5)
 
 
 class TestRelativisticGravitySolver:
@@ -391,6 +411,24 @@ class TestGravitySolverComparison:
         )
 
         np.testing.assert_allclose(accel_self_only, accel_newton, rtol=1e-6)
+
+
+class TestSimulationGravityIntegration:
+    """Integration tests involving Simulation <-> gravity coupling."""
+
+    def test_simulation_syncs_bh_mass_to_solver(self):
+        gravity = NewtonianGravity(G=1.0)
+        assert gravity.bh_mass == pytest.approx(0.0)
+
+        sim = Simulation.__new__(Simulation)
+        sim.gravity_solver = gravity
+        sim.config = SimulationConfig(bh_mass=3.5, verbose=False)
+        sim.state = SimulationState()
+        sim._log = lambda *_, **__: None  # Silence logging hook
+
+        sim._configure_gravity_solver()
+
+        assert sim.gravity_solver.bh_mass == pytest.approx(3.5)
 
 
 if __name__ == "__main__":

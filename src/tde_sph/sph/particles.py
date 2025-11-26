@@ -115,6 +115,8 @@ class ParticleSystem:
         self.density = np.zeros(n_particles, dtype=np.float32)
         self.pressure = np.zeros(n_particles, dtype=np.float32)
         self.sound_speed = np.zeros(n_particles, dtype=np.float32)
+        self.temperature = np.zeros(n_particles, dtype=np.float32)
+        self.velocity_magnitude = np.zeros(n_particles, dtype=np.float32)
 
         # Validate shapes
         self._validate_shapes()
@@ -130,6 +132,8 @@ class ParticleSystem:
         assert self.density.shape == (n,), f"density shape mismatch: {self.density.shape}"
         assert self.pressure.shape == (n,), f"pressure shape mismatch: {self.pressure.shape}"
         assert self.sound_speed.shape == (n,), f"sound_speed shape mismatch: {self.sound_speed.shape}"
+        assert self.temperature.shape == (n,), f"temperature shape mismatch: {self.temperature.shape}"
+        assert self.velocity_magnitude.shape == (n,), f"velocity_magnitude shape mismatch: {self.velocity_magnitude.shape}"
 
     def get_positions(self) -> NDArrayFloat:
         """Get particle positions."""
@@ -158,6 +162,14 @@ class ParticleSystem:
     def get_sound_speed(self) -> NDArrayFloat:
         """Get sound speeds."""
         return self.sound_speed
+
+    def get_temperature(self) -> NDArrayFloat:
+        """Get temperatures."""
+        return self.temperature
+
+    def get_velocity_magnitude(self) -> NDArrayFloat:
+        """Get velocity magnitudes."""
+        return self.velocity_magnitude
 
     def get_smoothing_length(self) -> NDArrayFloat:
         """Get smoothing lengths."""
@@ -197,6 +209,34 @@ class ParticleSystem:
         """Set smoothing lengths."""
         assert smoothing_length.shape == (self.n_particles,)
         self.smoothing_length = smoothing_length.astype(np.float32, copy=False)
+
+    def set_temperature(self, temperature: NDArrayFloat) -> None:
+        """Set temperatures."""
+        assert temperature.shape == (self.n_particles,)
+        self.temperature = temperature.astype(np.float32, copy=False)
+
+    def set_velocity_magnitude(self, velocity_magnitude: NDArrayFloat) -> None:
+        """Set velocity magnitudes."""
+        assert velocity_magnitude.shape == (self.n_particles,)
+        self.velocity_magnitude = velocity_magnitude.astype(np.float32, copy=False)
+
+    @property
+    def smoothing_lengths(self) -> NDArrayFloat:
+        """Alias for smoothing length array (plural for API consistency)."""
+        return self.smoothing_length
+
+    @smoothing_lengths.setter
+    def smoothing_lengths(self, value: NDArrayFloat) -> None:
+        self.set_smoothing_length(value)
+
+    @property
+    def sound_speeds(self) -> NDArrayFloat:
+        """Alias for sound speed array (plural for legacy code)."""
+        return self.sound_speed
+
+    @sound_speeds.setter
+    def sound_speeds(self, value: NDArrayFloat) -> None:
+        self.set_sound_speed(value)
 
     def kinetic_energy(self) -> float:
         """

@@ -180,6 +180,26 @@ class TestConfigLoaders:
         assert config.mode == "GR"
         assert config.bh_spin == 0.5
 
+    def test_load_config_ignores_unknown_keys(self, tmp_path):
+        """Unknown keys should be ignored with a warning rather than raising."""
+        cfg_path = tmp_path / "extra.yaml"
+        cfg_path.write_text(
+            """
+            simulation:
+              mode: "Newtonian"
+              t_end: 2.0
+            custom_section:
+              foo: 1
+            """
+        )
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = load_config(cfg_path)
+
+        assert config.t_end == 2.0
+        assert any("unsupported configuration keys" in str(msg.message) for msg in w)
+
     def test_save_and_load_roundtrip(self):
         """Test saving and loading config."""
         # Create config
@@ -262,9 +282,9 @@ class TestBackwardCompatibility:
         assert config.t_start == 0.0
         assert config.t_end == 10.0
         assert config.dt_initial == 0.001
-        assert config.cfl_factor == 0.3
-        assert config.output_dir == "output"
-        assert config.snapshot_interval == 0.1
+        assert config.cfl_factor == 0.7
+        assert config.output_dir == "outputs/default_run"
+        assert config.snapshot_interval == 0.01
         assert config.neighbour_search_method == "bruteforce"
         assert config.smoothing_length_eta == 1.2
         assert config.artificial_viscosity_alpha == 1.0

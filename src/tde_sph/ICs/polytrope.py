@@ -163,7 +163,7 @@ class Polytrope(ICGenerator):
         # For dimensionless mass=1, radius=1:
         # ρ_c = -1 / (4π ξ₁² dθ/dξ|_ξ₁)
         dtheta_dxi_surface = np.interp(self._xi_1, self._xi_grid, self._dtheta_dxi_grid)
-        rho_c_norm = np.float32(-1.0 / (4.0 * np.pi * self._xi_1**2 * dtheta_dxi_surface))
+        rho_c_norm = np.float32(self._xi_1 / (4.0 * np.pi * -dtheta_dxi_surface))
 
         # Density in normalized units
         rho_norm = rho_c_norm * rho_normalized

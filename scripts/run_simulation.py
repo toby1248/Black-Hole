@@ -172,6 +172,7 @@ def main():
     # 3. Create particle system
     print(f"\nInitializing {args.particles} SPH particles...")
     particles = ParticleSystem(
+        n_particles=args.particles,
         positions=pos,
         velocities=vel,
         masses=mass,
@@ -179,7 +180,7 @@ def main():
     )
 
     # Compute smoothing lengths
-    h = polytrope.compute_smoothing_lengths(mass, rho, eta=1.2)
+    h = polytrope.compute_smoothing_lengths(mass, rho)
     particles.smoothing_lengths = h
 
     print(f"  Total mass: {np.sum(mass):.3e}")

@@ -21,7 +21,7 @@ from pathlib import Path
 import h5py
 import csv
 
-from src.tde_sph.io import (
+from tde_sph.io import (
     DiagnosticsWriter,
     OrbitalElements,
     compute_orbital_elements,

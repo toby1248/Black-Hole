@@ -112,14 +112,17 @@ def setup_tde_initial_conditions(
     # Create polytropic star
     print(f"Generating polytrope star (n={polytropic_index}, N={n_particles})...")
     star_ic = Polytrope(
-        n_particles=n_particles,
-        polytropic_index=polytropic_index,
-        total_mass=star_mass,
-        radius=star_radius,
         gamma=5.0/3.0
     )
 
-    positions, velocities, masses, internal_energy, smoothing_length = star_ic.generate()
+    positions, velocities, masses, internal_energy, densities = star_ic.generate(
+        n_particles=n_particles,
+        M_star=star_mass,
+        R_star=star_radius
+    )
+
+    # Compute smoothing lengths
+    smoothing_length = star_ic.compute_smoothing_lengths(masses, densities)
 
     print(f"  Star mass: {np.sum(masses):.4e} (target: {star_mass:.4e})")
     print(f"  Star radius: {np.max(np.linalg.norm(positions, axis=1)):.4e} (target: {star_radius:.4e})")
@@ -178,16 +181,12 @@ def setup_tde_initial_conditions(
     print(f"  Star center: ({star_center[0]:.4f}, {star_center[1]:.4f}, {star_center[2]:.4f})")
     print(f"  Center-of-mass velocity: ({orbital_velocity[0]:.4f}, {orbital_velocity[1]:.4f}, {orbital_velocity[2]:.4f})")
 
-    # Compute initial density (SPH summation)
-    # For this demo, use approximate density based on mass and smoothing length
-    density = masses / (smoothing_length**3 * np.pi**(3/2))
-
     # Package as dictionary
     particles = {
         'positions': positions,
         'velocities': velocities,
         'masses': masses,
-        'density': density,
+        'density': densities,
         'internal_energy': internal_energy,
         'smoothing_length': smoothing_length
     }

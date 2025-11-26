@@ -2,19 +2,7 @@
  * TDE-SPH Three.js Visualizer
  *
  * WebGL-based 3D particle visualization using Three.js.
- * Renders millions of SPH particles with GPU acceleration.
- *
- * Features:
- * - Point cloud rendering with custom vertex colors
- * - Multiple colormaps (viridis, plasma, inferno, etc.)
- * - Logarithmic and linear color scaling
- * - Orbit controls for camera manipulation
- * - Black hole visualization at origin
- * - Axes helper
- * - Efficient buffer geometry updates
- *
- * Author: TDE-SPH Development Team
- * Date: 2025-11-18
+ * Supports configurable point shapes, transparency, and density-based sizing.
  */
 
 class Visualizer {
@@ -33,12 +21,17 @@ class Visualizer {
         this.axesHelper = null;
 
         // Data
-        this.positions = null;  // Float32Array
-        this.colorField = null; // Float32Array (density, temperature, etc.)
+        this.positions = null;      // Float32Array
+        this.colorField = null;     // Float32Array (density, temperature, etc.)
+        this.densityField = null;   // Float32Array (used for size scaling)
         this.particleCount = 0;
 
         // Settings
         this.pointSize = 2.0;
+        this.pointShape = 'square'; // square | circle | smooth
+        this.pointOpacity = 1.0;
+        this.sizeByDensity = false;
+        this.densityScale = 1.0;
         this.colorBy = 'density';
         this.colormap = 'viridis';
         this.logScale = true;
@@ -50,22 +43,25 @@ class Visualizer {
         this.frameCount = 0;
         this.fps = 0;
 
-        // Initialize
+        // Animation state
+        this.isActive = true;
+        this.animationId = null;
+
         this.init();
     }
 
     init() {
-        // Create scene
+        // Scene
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x000000);
 
-        // Create camera
+        // Camera
         const aspect = this.canvas.clientWidth / this.canvas.clientHeight;
         this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
         this.camera.position.set(20, 20, 20);
         this.camera.lookAt(0, 0, 0);
 
-        // Create renderer
+        // Renderer
         this.renderer = new THREE.WebGLRenderer({
             canvas: this.canvas,
             antialias: true,
@@ -74,7 +70,7 @@ class Visualizer {
         this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
 
-        // Orbit controls
+        // Controls
         this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
@@ -82,25 +78,21 @@ class Visualizer {
         this.controls.minDistance = 1;
         this.controls.maxDistance = 500;
 
-        // Lighting (for black hole sphere)
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
-        this.scene.add(ambientLight);
-
+        // Lights
+        this.scene.add(new THREE.AmbientLight(0x404040, 0.5));
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(10, 10, 10);
         this.scene.add(directionalLight);
 
-        // Black hole at origin
+        // Objects
         this.createBlackHole();
-
-        // Axes helper
         this.axesHelper = new THREE.AxesHelper(10);
         this.scene.add(this.axesHelper);
 
-        // Handle window resize
+        // Resize handling
         window.addEventListener('resize', () => this.onWindowResize());
 
-        // Start animation loop
+        // Start loop
         this.animate();
     }
 
@@ -112,22 +104,12 @@ class Visualizer {
             roughness: 0.2,
             metalness: 0.8
         });
-
         this.blackHole = new THREE.Mesh(geometry, material);
         this.scene.add(this.blackHole);
     }
 
-    loadParticles(positions, colorField, colorBy = 'density') {
-        /**
-         * Load particle data and create point cloud.
-         *
-         * Parameters:
-         *   positions: Float32Array of shape (N, 3) - particle positions
-         *   colorField: Float32Array of length N - quantity to color by
-         *   colorBy: string - name of the field (for display)
-         */
-
-        // Remove old particle system
+    loadParticles(positions, colorField, densityField, colorBy = 'density') {
+        // Dispose old system
         if (this.particleSystem) {
             this.scene.remove(this.particleSystem);
             this.particleSystem.geometry.dispose();
@@ -137,37 +119,30 @@ class Visualizer {
         // Store data
         this.positions = positions;
         this.colorField = colorField;
+        this.densityField = densityField;
         this.particleCount = positions.length / 3;
         this.colorBy = colorBy;
 
-        // Create geometry
+        // Geometry
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-        // Compute colors
         const colors = this.computeColors(colorField);
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-        // Create material
-        const material = new THREE.PointsMaterial({
-            size: this.pointSize,
-            vertexColors: true,
-            transparent: false,
-            sizeAttenuation: true
-        });
+        const sizeAttribute = this.buildSizeAttribute(densityField);
+        geometry.setAttribute('size', new THREE.BufferAttribute(sizeAttribute, 1));
 
-        // Create point cloud
+        // Material + points
+        const material = this.buildParticleMaterial();
         this.particleSystem = new THREE.Points(geometry, material);
         this.scene.add(this.particleSystem);
 
-        // Auto-center camera on data
+        // Center view
         this.fitCameraToParticles();
     }
 
-    updateParticles(positions, colorField) {
-        /**
-         * Update existing particles with new data (efficient).
-         */
+    updateParticles(positions, colorField, densityField) {
         if (!this.particleSystem) {
             console.warn('No particle system loaded');
             return;
@@ -175,30 +150,32 @@ class Visualizer {
 
         this.positions = positions;
         this.colorField = colorField;
+        this.densityField = densityField;
+        this.particleCount = positions.length / 3;
 
-        // Update positions
+        // Positions
         this.particleSystem.geometry.attributes.position.array = positions;
         this.particleSystem.geometry.attributes.position.needsUpdate = true;
 
-        // Update colors
+        // Colors
         const colors = this.computeColors(colorField);
         this.particleSystem.geometry.attributes.color.array = colors;
         this.particleSystem.geometry.attributes.color.needsUpdate = true;
+
+        // Sizes
+        const sizeAttr = this.buildSizeAttribute(densityField);
+        this.particleSystem.geometry.attributes.size.array = sizeAttr;
+        this.particleSystem.geometry.attributes.size.needsUpdate = true;
+
+        this.updateMaterialUniforms();
     }
 
     computeColors(field) {
-        /**
-         * Compute RGB colors from scalar field using current colormap.
-         *
-         * Returns: Float32Array of shape (N, 3) with RGB values [0, 1]
-         */
         const N = field.length;
         const colors = new Float32Array(N * 3);
 
-        // Compute field range
         let minVal = field[0];
         let maxVal = field[0];
-
         for (let i = 0; i < N; i++) {
             const val = field[i];
             if (!isNaN(val) && isFinite(val)) {
@@ -207,144 +184,193 @@ class Visualizer {
             }
         }
 
-        // Apply logarithmic scaling if enabled
         if (this.logScale && minVal > 0) {
             minVal = Math.log10(minVal);
             maxVal = Math.log10(maxVal);
         }
+        const range = (maxVal - minVal) !== 0 ? (maxVal - minVal) : 1e-6;
 
-        // Normalize and apply colormap
         for (let i = 0; i < N; i++) {
             let val = field[i];
-
-            // Handle invalid values
             if (isNaN(val) || !isFinite(val)) {
-                colors[i*3] = 0.5;
-                colors[i*3+1] = 0.5;
-                colors[i*3+2] = 0.5;
+                colors[i * 3] = 0.5;
+                colors[i * 3 + 1] = 0.5;
+                colors[i * 3 + 2] = 0.5;
                 continue;
             }
 
-            // Apply log scale
             if (this.logScale && val > 0) {
                 val = Math.log10(val);
             }
 
-            // Normalize to [0, 1]
-            const normalized = (val - minVal) / (maxVal - minVal);
+            const normalized = (val - minVal) / range;
             const clamped = Math.max(0, Math.min(1, normalized));
-
-            // Apply colormap
             const rgb = this.applyColormap(clamped, this.colormap);
-            colors[i*3] = rgb[0];
-            colors[i*3+1] = rgb[1];
-            colors[i*3+2] = rgb[2];
+            colors[i * 3] = rgb[0];
+            colors[i * 3 + 1] = rgb[1];
+            colors[i * 3 + 2] = rgb[2];
         }
 
         return colors;
     }
 
     applyColormap(value, colormapName) {
-        /**
-         * Apply colormap to normalized value [0, 1].
-         * Returns [r, g, b] in range [0, 1].
-         *
-         * Colormaps: viridis, plasma, inferno, hot, cool, rainbow
-         */
         const t = value;
-
-        switch(colormapName) {
+        switch (colormapName) {
             case 'viridis':
-                // Analytical approximation of viridis
                 return [
-                    0.267 * (1-t) + 0.993 * t,
-                    0.005 * (1-t) + 0.906 * t,
-                    0.329 * (1-t) + 0.144 * t
+                    0.267 * (1 - t) + 0.993 * t,
+                    0.004 * (1 - t) + 0.906 * t,
+                    0.329 * (1 - t) + 0.143 * t
                 ];
-
             case 'plasma':
-                // Analytical approximation of plasma
                 return [
-                    0.050 + 0.900 * Math.pow(t, 0.5),
-                    0.030 + 0.700 * Math.pow(t, 1.5),
-                    0.550 - 0.500 * t
+                    0.050 * (1 - t) + 0.940 * t,
+                    0.030 * (1 - t) + 0.510 * t,
+                    0.527 * (1 - t) + 0.150 * t
                 ];
-
             case 'inferno':
-                // Analytical approximation of inferno
                 return [
-                    0.000 + 1.000 * Math.pow(t, 0.8),
-                    0.000 + 0.700 * Math.pow(t, 2.0),
-                    0.000 + 0.400 * Math.pow(t, 3.0)
+                    0.100 * (1 - t) + 0.988 * t,
+                    0.041 * (1 - t) + 0.645 * t,
+                    0.200 * (1 - t) + 0.010 * t
                 ];
-
             case 'hot':
-                // Hot (black → red → yellow → white)
-                if (t < 0.33) {
-                    return [3.0 * t, 0, 0];
-                } else if (t < 0.66) {
-                    return [1.0, 3.0 * (t - 0.33), 0];
-                } else {
-                    return [1.0, 1.0, 3.0 * (t - 0.66)];
-                }
-
-            case 'cool':
-                // Cool (cyan → blue → magenta)
                 return [
-                    t,
-                    1.0 - t,
-                    1.0
+                    Math.min(1, t * 3),
+                    Math.min(1, Math.max(0, (t - 1 / 3) * 3)),
+                    Math.min(1, Math.max(0, (t - 2 / 3) * 3))
                 ];
-
+            case 'cool':
+                return [t, 1 - t, 1];
             case 'rainbow':
-                // Rainbow (HSV with varying hue)
-                const hue = (1.0 - t) * 240 / 360;  // Blue to red
-                return this.hsvToRgb(hue, 1.0, 1.0);
-
+                return this.hsvToRgb(0.7 * (1 - t), 1, 1);
             default:
-                // Fallback: grayscale
                 return [t, t, t];
         }
     }
 
     hsvToRgb(h, s, v) {
-        /**
-         * Convert HSV to RGB.
-         * h, s, v in [0, 1]
-         * Returns [r, g, b] in [0, 1]
-         */
         const i = Math.floor(h * 6);
         const f = h * 6 - i;
         const p = v * (1 - s);
         const q = v * (1 - f * s);
-        const t_val = v * (1 - (1 - f) * s);
-
-        switch(i % 6) {
-            case 0: return [v, t_val, p];
+        const t = v * (1 - (1 - f) * s);
+        switch (i % 6) {
+            case 0: return [v, t, p];
             case 1: return [q, v, p];
-            case 2: return [p, v, t_val];
+            case 2: return [p, v, t];
             case 3: return [p, q, v];
-            case 4: return [t_val, p, v];
+            case 4: return [t, p, v];
             case 5: return [v, p, q];
             default: return [0, 0, 0];
         }
     }
 
+    buildSizeAttribute(densityField) {
+        const sizeAttr = new Float32Array(this.particleCount);
+        if (!densityField || densityField.length === 0) {
+            sizeAttr.fill(1.0);
+            return sizeAttr;
+        }
+
+        // Compute median density
+        const n = Math.min(densityField.length, this.particleCount);
+        const copy = Array.from(densityField.slice(0, n)).map(v => Math.max(v, 1e-20)).sort((a, b) => a - b);
+        const mid = Math.floor(copy.length / 2);
+        const median = copy.length % 2 === 0 ? 0.5 * (copy[mid - 1] + copy[mid]) : copy[mid];
+        const medianSafe = Math.max(median, 1e-20);
+
+        for (let i = 0; i < n; i++) {
+            const rho = Math.max(densityField[i], 1e-20);
+            if (rho < medianSafe) {
+                let scale = Math.pow(medianSafe / rho, 1 / 3); // inverse density
+                scale = Math.min(scale, 5.0);
+                sizeAttr[i] = scale;
+            } else {
+                sizeAttr[i] = 1.0;
+            }
+        }
+        for (let i = n; i < this.particleCount; i++) {
+            sizeAttr[i] = 1.0;
+        }
+        return sizeAttr;
+    }
+
+    buildParticleMaterial() {
+        const shapeMode = this.pointShape === 'circle' ? 1 : (this.pointShape === 'smooth' ? 2 : 0);
+        const uniforms = {
+            uSize: { value: this.pointSize },
+            uOpacity: { value: this.pointOpacity },
+            uShapeMode: { value: shapeMode },
+            uUseDensity: { value: this.sizeByDensity },
+            uDensityScale: { value: this.densityScale },
+            uPixelRatio: { value: this.renderer ? this.renderer.getPixelRatio() : 1.0 },
+        };
+
+        return new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexColors: true,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.NormalBlending,
+            vertexShader: `
+                uniform float uSize;
+                uniform bool uUseDensity;
+                uniform float uDensityScale;
+                uniform float uPixelRatio;
+                attribute float size;
+                varying vec3 vColor;
+                varying float vSizeScale;
+                void main() {
+                    vColor = color;
+                    vSizeScale = uUseDensity ? size * uDensityScale : 1.0;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    float pointSize = uSize * vSizeScale * uPixelRatio;
+                    pointSize *= 300.0 / -mvPosition.z;
+                    gl_PointSize = pointSize;
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                uniform float uOpacity;
+                uniform int uShapeMode;
+                varying vec3 vColor;
+                varying float vSizeScale;
+                void main() {
+                    vec2 c = gl_PointCoord - vec2(0.5);
+                    float dist = length(c);
+                    float alpha = uOpacity;
+
+                    if (uShapeMode == 1 && dist > 0.5) {
+                        discard;
+                    }
+                    if (uShapeMode == 2) {
+                        float edge = smoothstep(0.01, 0.6, dist);
+                        alpha *= (1.0 - edge);
+                        if (alpha <= 0.001) discard;
+                    }
+
+                    if (vSizeScale > 1.0) {
+                        alpha /= vSizeScale; // larger (low-density) particles become more transparent
+                    }
+
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `
+        });
+    }
+
     fitCameraToParticles() {
-        /**
-         * Automatically position camera to view all particles.
-         */
         if (!this.positions || this.positions.length === 0) return;
 
-        // Compute bounding box
         let minX = Infinity, minY = Infinity, minZ = Infinity;
         let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
         for (let i = 0; i < this.positions.length; i += 3) {
             const x = this.positions[i];
-            const y = this.positions[i+1];
-            const z = this.positions[i+2];
-
+            const y = this.positions[i + 1];
+            const z = this.positions[i + 2];
             if (x < minX) minX = x;
             if (x > maxX) maxX = x;
             if (y < minY) minY = y;
@@ -353,18 +379,12 @@ class Visualizer {
             if (z > maxZ) maxZ = z;
         }
 
-        // Compute center and size
         const centerX = (minX + maxX) / 2;
         const centerY = (minY + maxY) / 2;
         const centerZ = (minZ + maxZ) / 2;
+        const maxSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
 
-        const sizeX = maxX - minX;
-        const sizeY = maxY - minY;
-        const sizeZ = maxZ - minZ;
-        const maxSize = Math.max(sizeX, sizeY, sizeZ);
-
-        // Position camera
-        const distance = maxSize * 1.5;
+        const distance = Math.max(5, maxSize * 1.5);
         this.camera.position.set(
             centerX + distance * 0.7,
             centerY + distance * 0.7,
@@ -376,47 +396,76 @@ class Visualizer {
 
     setPointSize(size) {
         this.pointSize = size;
-        if (this.particleSystem) {
-            this.particleSystem.material.size = size;
-        }
+        this.updateMaterialUniforms();
     }
 
     setColormap(colormapName) {
         this.colormap = colormapName;
-        if (this.colorField) {
-            // Recompute colors
+        if (this.colorField && this.particleSystem) {
             const colors = this.computeColors(this.colorField);
-            if (this.particleSystem) {
-                this.particleSystem.geometry.attributes.color.array = colors;
-                this.particleSystem.geometry.attributes.color.needsUpdate = true;
-            }
+            this.particleSystem.geometry.attributes.color.array = colors;
+            this.particleSystem.geometry.attributes.color.needsUpdate = true;
         }
     }
 
     setLogScale(enabled) {
         this.logScale = enabled;
-        if (this.colorField) {
-            // Recompute colors
+        if (this.colorField && this.particleSystem) {
             const colors = this.computeColors(this.colorField);
-            if (this.particleSystem) {
-                this.particleSystem.geometry.attributes.color.array = colors;
-                this.particleSystem.geometry.attributes.color.needsUpdate = true;
-            }
+            this.particleSystem.geometry.attributes.color.array = colors;
+            this.particleSystem.geometry.attributes.color.needsUpdate = true;
         }
     }
 
     setShowBlackHole(show) {
         this.showBlackHole = show;
-        if (this.blackHole) {
-            this.blackHole.visible = show;
-        }
+        if (this.blackHole) this.blackHole.visible = show;
     }
 
     setShowAxes(show) {
         this.showAxes = show;
-        if (this.axesHelper) {
-            this.axesHelper.visible = show;
-        }
+        if (this.axesHelper) this.axesHelper.visible = show;
+    }
+
+    setPointShape(shape) {
+        this.pointShape = shape;
+        this.rebuildMaterial();
+    }
+
+    setPointOpacity(opacity) {
+        this.pointOpacity = opacity;
+        this.updateMaterialUniforms();
+    }
+
+    setSizeByDensity(enabled) {
+        this.sizeByDensity = enabled;
+        this.updateMaterialUniforms();
+    }
+
+    setDensityScale(scale) {
+        this.densityScale = scale;
+        this.updateMaterialUniforms();
+    }
+
+    rebuildMaterial() {
+        if (!this.particleSystem) return;
+        const geometry = this.particleSystem.geometry;
+        this.scene.remove(this.particleSystem);
+        this.particleSystem.material.dispose();
+        const material = this.buildParticleMaterial();
+        this.particleSystem = new THREE.Points(geometry, material);
+        this.scene.add(this.particleSystem);
+    }
+
+    updateMaterialUniforms() {
+        if (!this.particleSystem || !this.particleSystem.material.uniforms) return;
+        const uniforms = this.particleSystem.material.uniforms;
+        uniforms.uSize.value = this.pointSize;
+        uniforms.uOpacity.value = this.pointOpacity;
+        uniforms.uShapeMode.value = this.pointShape === 'circle' ? 1 : (this.pointShape === 'smooth' ? 2 : 0);
+        uniforms.uUseDensity.value = this.sizeByDensity;
+        uniforms.uDensityScale.value = this.densityScale;
+        uniforms.uPixelRatio.value = this.renderer ? this.renderer.getPixelRatio() : 1.0;
     }
 
     resetCamera() {
@@ -427,50 +476,40 @@ class Visualizer {
     }
 
     setTopView() {
-        if (this.positions && this.positions.length > 0) {
-            // Compute center
-            let centerX = 0, centerY = 0, centerZ = 0;
-            const N = this.positions.length / 3;
-            for (let i = 0; i < this.positions.length; i += 3) {
-                centerX += this.positions[i] / N;
-                centerY += this.positions[i+1] / N;
-                centerZ += this.positions[i+2] / N;
-            }
-
-            const distance = 30;
-            this.camera.position.set(centerX, centerY, centerZ + distance);
-            this.camera.lookAt(centerX, centerY, centerZ);
-            this.controls.target.set(centerX, centerY, centerZ);
-            this.controls.update();
+        if (!this.positions || this.positions.length === 0) return;
+        let cx = 0, cy = 0, cz = 0;
+        const N = this.positions.length / 3;
+        for (let i = 0; i < this.positions.length; i += 3) {
+            cx += this.positions[i] / N;
+            cy += this.positions[i + 1] / N;
+            cz += this.positions[i + 2] / N;
         }
+        const distance = 30;
+        this.camera.position.set(cx, cy, cz + distance);
+        this.camera.lookAt(cx, cy, cz);
+        this.controls.target.set(cx, cy, cz);
+        this.controls.update();
     }
 
     setSideView() {
-        if (this.positions && this.positions.length > 0) {
-            let centerX = 0, centerY = 0, centerZ = 0;
-            const N = this.positions.length / 3;
-            for (let i = 0; i < this.positions.length; i += 3) {
-                centerX += this.positions[i] / N;
-                centerY += this.positions[i+1] / N;
-                centerZ += this.positions[i+2] / N;
-            }
-
-            const distance = 30;
-            this.camera.position.set(centerX + distance, centerY, centerZ);
-            this.camera.lookAt(centerX, centerY, centerZ);
-            this.controls.target.set(centerX, centerY, centerZ);
-            this.controls.update();
+        if (!this.positions || this.positions.length === 0) return;
+        let cx = 0, cy = 0, cz = 0;
+        const N = this.positions.length / 3;
+        for (let i = 0; i < this.positions.length; i += 3) {
+            cx += this.positions[i] / N;
+            cy += this.positions[i + 1] / N;
+            cz += this.positions[i + 2] / N;
         }
+        const distance = 30;
+        this.camera.position.set(cx + distance, cy, cz);
+        this.camera.lookAt(cx, cy, cz);
+        this.controls.target.set(cx, cy, cz);
+        this.controls.update();
     }
 
     screenshot() {
-        /**
-         * Capture current view as PNG image.
-         */
         this.renderer.render(this.scene, this.camera);
         const dataURL = this.renderer.domElement.toDataURL('image/png');
-
-        // Trigger download
         const link = document.createElement('a');
         link.download = `tde_sph_screenshot_${Date.now()}.png`;
         link.href = dataURL;
@@ -480,36 +519,72 @@ class Visualizer {
     onWindowResize() {
         const width = this.canvas.clientWidth;
         const height = this.canvas.clientHeight;
-
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
-
         this.renderer.setSize(width, height);
+        this.updateMaterialUniforms();
     }
 
     animate() {
-        requestAnimationFrame(() => this.animate());
-
-        // Update controls
+        if (!this.isActive) return;
+        
+        this.animationId = requestAnimationFrame(() => this.animate());
         this.controls.update();
-
-        // Render scene
         this.renderer.render(this.scene, this.camera);
 
-        // Calculate FPS
         const currentTime = performance.now();
         this.frameCount++;
-
         if (currentTime - this.lastTime >= 1000) {
             this.fps = this.frameCount;
             this.frameCount = 0;
             this.lastTime = currentTime;
-
-            // Update FPS display
             const fpsElement = document.getElementById('fps-counter-value');
             if (fpsElement) {
                 fpsElement.textContent = this.fps;
             }
         }
+    }
+    
+    pauseAnimation() {
+        this.isActive = false;
+        if (this.animationId) {
+            cancelAnimationFrame(this.animationId);
+            this.animationId = null;
+        }
+    }
+    
+    resumeAnimation() {
+        if (!this.isActive) {
+            this.isActive = true;
+            this.animate();
+        }
+    }
+    
+    /**
+     * Dispose all resources and free WebGL context.
+     */
+    dispose() {
+        this.pauseAnimation();
+        
+        if (this.particleSystem) {
+            this.scene.remove(this.particleSystem);
+            this.particleSystem.geometry.dispose();
+            this.particleSystem.material.dispose();
+        }
+        
+        if (this.axesHelper) {
+            this.scene.remove(this.axesHelper);
+        }
+        
+        if (this.blackHole) {
+            this.scene.remove(this.blackHole);
+            this.blackHole.geometry.dispose();
+            this.blackHole.material.dispose();
+        }
+        
+        this.renderer.dispose();
+        
+        // Remove event listener (need to store reference for proper removal)
+        // Note: This may not fully remove if anonymous function was used
     }
 }

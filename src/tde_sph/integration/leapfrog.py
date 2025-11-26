@@ -45,7 +45,7 @@ class LeapfrogIntegrator(TimeIntegrator):
 
     def __init__(
         self,
-        cfl_factor: float = 0.3,
+        cfl_factor: float = 1.0,
         accel_factor: float = 0.25,
         internal_energy_evolution: bool = True
     ):

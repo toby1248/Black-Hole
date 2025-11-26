@@ -125,7 +125,7 @@ class TestMinkowskiMetric:
         """Test that geodesic acceleration is zero."""
         metric = MinkowskiMetric()
         x = np.array([1.0, 2.0, 3.0])
-        v = np.array([1.0, 0.1, 0.2, 0.3])  # 4-velocity
+        v = np.array([0.1, 0.2, 0.3])  # Cartesian 3-velocity
 
         a = metric.geodesic_acceleration(x, v)
 
@@ -403,7 +403,7 @@ class TestGeodesicIntegration:
         metric = MinkowskiMetric()
 
         x0 = np.array([0.0, 0.0, 0.0])
-        v = np.array([1.0, 0.5, 0.5, 0.0])  # 4-velocity
+        v = np.array([0.5, 0.5, 0.0])  # Cartesian 3-velocity
 
         # Integrate for small time
         dt = 0.01
@@ -412,7 +412,7 @@ class TestGeodesicIntegration:
         x = x0.copy()
         for _ in range(n_steps):
             a = metric.geodesic_acceleration(x, v)
-            x += v[1:] * dt  # Only spatial components
+            x += v * dt
 
             # Acceleration should remain zero
             np.testing.assert_allclose(a, np.zeros(3), atol=1e-12)
@@ -423,9 +423,7 @@ class TestGeodesicIntegration:
 
         # Particle starting at rest at large radius
         x = np.array([100.0, 0.0, 0.0])
-        # 4-velocity (approximate u^t for large r)
-        u_t = 1.0 / np.sqrt(1.0 - 2.0 / 100.0)
-        v = np.array([u_t, 0.0, 0.0, 0.0])
+        v = np.zeros(3)
 
         a = metric.geodesic_acceleration(x, v)
 

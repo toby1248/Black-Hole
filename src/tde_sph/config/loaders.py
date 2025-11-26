@@ -70,6 +70,26 @@ def load_config(filename: Union[str, Path], **overrides) -> SimulationConfig:
     # Apply overrides
     flat_config.update(overrides)
 
+    # Filter out unsupported keys (retain compatibility with GUI-only sections)
+    allowed_fields = set(SimulationConfig.model_fields.keys())
+    filtered_config = {}
+    ignored_keys = []
+
+    for key, value in flat_config.items():
+        if key in allowed_fields:
+            filtered_config[key] = value
+        else:
+            ignored_keys.append(key)
+
+    if ignored_keys:
+        preview = ', '.join(sorted(ignored_keys)[:5])
+        more = '' if len(ignored_keys) <= 5 else f" (+{len(ignored_keys) - 5} more)"
+        warnings.warn(
+            f"Ignoring unsupported configuration keys: {preview}{more}"
+        )
+
+    flat_config = filtered_config
+
     # Create and validate config
     try:
         config = SimulationConfig(**flat_config)
@@ -160,6 +180,9 @@ def flatten_config(config_dict: Dict[str, Any], parent_key: str = '') -> Dict[st
             't_start': 't_start',
             't_end': 't_end',
             'dt_initial': 'dt_initial',
+            'dt_min': 'dt_min',
+            'dt_max': 'dt_max',
+            'dt_change_limit': 'dt_change_limit',
             'snapshot_interval': 'snapshot_interval',
             'log_interval': 'log_interval',
             'output_dir': 'output_dir',

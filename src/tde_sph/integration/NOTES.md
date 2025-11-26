@@ -194,7 +194,7 @@ with optional absolute min/max bounds enforced.
 ### Open (for Future Phases)
 
 ⚠️ **Per-particle integrators (RISK-INTEGRATION-004):**
-- **Context:** Different particles using different integrators complicates neighbor search
+- **Context:** Different particles using different integrators complicates neighbour search
 - **Phase 2 Status:** Deferred; using single global integrator
 - **Future (Phase 4):** Implement block timesteps with integrator selection per block
 

@@ -60,7 +60,7 @@ def qapp():
 def main_window(qapp):
     """Create main window instance."""
     if HAS_PYQT:
-        from tde_sph.gui import TDESPHMainWindow
+        from gui import TDESPHMainWindow
         window = TDESPHMainWindow()
         yield window
         window.close()
@@ -72,7 +72,7 @@ def main_window(qapp):
 def config_editor(qapp):
     """Create config editor widget."""
     if HAS_PYQT:
-        from tde_sph.gui import ConfigEditorWidget
+        from gui import ConfigEditorWidget
         editor = ConfigEditorWidget()
         yield editor
     else:
@@ -83,7 +83,7 @@ def config_editor(qapp):
 def control_panel(qapp):
     """Create control panel widget."""
     if HAS_PYQT:
-        from tde_sph.gui import ControlPanelWidget
+        from gui import ControlPanelWidget
         panel = ControlPanelWidget()
         yield panel
     else:
@@ -94,7 +94,7 @@ def control_panel(qapp):
 def data_display(qapp):
     """Create data display widget."""
     if HAS_PYQT:
-        from tde_sph.gui import DataDisplayWidget
+        from gui import DataDisplayWidget
         display = DataDisplayWidget()
         yield display
     else:

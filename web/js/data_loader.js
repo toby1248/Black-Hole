@@ -2,15 +2,13 @@
  * TDE-SPH Data Loader
  *
  * Handles loading and parsing of simulation data from various sources:
- * - Local HDF5 files (via conversion to JSON)
+ * - Local HDF5 files (via h5wasm WebAssembly library)
+ * - Local JSON files
  * - Simulation server (WebSocket or HTTP)
  * - Demo data (procedurally generated)
  *
- * Note: Browser-based HDF5 reading requires h5wasm library (not included by default).
- * For production use, consider serving pre-converted JSON snapshots.
- *
  * Author: TDE-SPH Development Team
- * Date: 2025-11-18
+ * Date: 2025-11-25
  */
 
 class DataLoader {
@@ -23,6 +21,18 @@ class DataLoader {
         this.serverURL = null;
         this.websocket = null;
         this.isConnected = false;
+
+        // HDF5 wasm loader
+        this.h5wasm = null;
+        this.h5wasmReady = null;
+        
+        // Black hole metadata from HDF5
+        this.bhMass = null;
+        this.bhSpin = null;
+        this.metricType = null;
+        
+        // Density statistics for scaling (90th percentile for clamp threshold)
+        this.density90thPercentile = null;
     }
 
     loadDemoData() {
@@ -119,6 +129,17 @@ class DataLoader {
             combinedVel.set(velocityMag);
             combinedVel.set(streamVelocity, particlesPerSnapshot);
 
+            // Create derived fields using for loops (avoid .map() stack overflow on large arrays)
+            const internalEnergy = new Float32Array(totalParticles);
+            const pressure = new Float32Array(totalParticles);
+            const entropy = new Float32Array(totalParticles);
+            for (let i = 0; i < totalParticles; i++) {
+                internalEnergy[i] = combinedTemp[i] / 10000.0;
+                pressure[i] = combinedDensity[i] * combinedTemp[i] / 10000.0;
+                const rho = Math.max(combinedDensity[i], 1e-30);
+                entropy[i] = Math.log(combinedTemp[i] / Math.pow(rho, 0.4));
+            }
+            
             // Create snapshot object
             const snapshot = {
                 time: time,
@@ -127,10 +148,10 @@ class DataLoader {
                 positions: combinedPositions,
                 density: combinedDensity,
                 temperature: combinedTemp,
-                internal_energy: combinedTemp.map(T => T / 10000.0),  // Approx
+                internal_energy: internalEnergy,
                 velocity_magnitude: combinedVel,
-                pressure: combinedDensity.map((rho, idx) => rho * combinedTemp[idx] / 10000.0),
-                entropy: combinedTemp.map((T, idx) => Math.log(T / (combinedDensity[idx]**0.4)))
+                pressure: pressure,
+                entropy: entropy
             };
 
             this.snapshots.push(snapshot);
@@ -138,6 +159,14 @@ class DataLoader {
 
         this.currentIndex = 0;
         this.isLoaded = true;
+        
+        // Compute density statistics
+        this.computeDensityPercentile();
+        
+        // Set demo BH parameters
+        this.bhMass = 1e6;
+        this.bhSpin = 0.0;
+        this.metricType = 'schwarzschild';
 
         console.log(`Demo data generated: ${numSnapshots} snapshots, ${this.snapshots[0].n_particles} particles each`);
 
@@ -166,20 +195,39 @@ class DataLoader {
                 try {
                     const data = JSON.parse(event.target.result);
 
-                    // Convert nested arrays to Float32Array
-                    const positions = new Float32Array(data.positions.flat());
+                    // Manual flatten for positions (avoids stack overflow on large arrays)
+                    const flattenPositions = (arr) => {
+                        const result = new Float32Array(arr.length * 3);
+                        for (let i = 0; i < arr.length; i++) {
+                            result[i * 3] = arr[i][0];
+                            result[i * 3 + 1] = arr[i][1];
+                            result[i * 3 + 2] = arr[i][2];
+                        }
+                        return result;
+                    };
+                    
+                    const positions = flattenPositions(data.positions);
 
+                    // Helper function to create filled array without .map() (avoids stack overflow on large arrays)
+                    const createFilledArray = (length, value) => {
+                        const arr = new Float32Array(length);
+                        arr.fill(value);
+                        return arr;
+                    };
+                    
+                    const n = data.n_particles;
+                    
                     const snapshot = {
                         time: data.time,
                         step: data.step,
-                        n_particles: data.n_particles,
+                        n_particles: n,
                         positions: positions,
                         density: new Float32Array(data.density),
-                        temperature: new Float32Array(data.temperature || data.density.map(()=>1000)),
-                        internal_energy: new Float32Array(data.internal_energy || data.density.map(()=>1.0)),
-                        velocity_magnitude: new Float32Array(data.velocity_magnitude || data.density.map(()=>0.1)),
+                        temperature: new Float32Array(data.temperature || createFilledArray(n, 1000)),
+                        internal_energy: new Float32Array(data.internal_energy || createFilledArray(n, 1.0)),
+                        velocity_magnitude: new Float32Array(data.velocity_magnitude || createFilledArray(n, 0.1)),
                         pressure: new Float32Array(data.pressure || data.density),
-                        entropy: new Float32Array(data.entropy || data.density.map(()=>1.0))
+                        entropy: new Float32Array(data.entropy || createFilledArray(n, 1.0))
                     };
 
                     resolve(snapshot);
@@ -201,26 +249,7 @@ class DataLoader {
          * Parameters:
          *   files: FileList from input element
          */
-        this.snapshots = [];
-
-        for (const file of files) {
-            try {
-                const snapshot = await this.loadJSONFile(file);
-                this.snapshots.push(snapshot);
-            } catch(error) {
-                console.error(`Error loading ${file.name}:`, error);
-            }
-        }
-
-        // Sort by time
-        this.snapshots.sort((a, b) => a.time - b.time);
-
-        this.currentIndex = 0;
-        this.isLoaded = true;
-
-        console.log(`Loaded ${this.snapshots.length} snapshots`);
-
-        return this.snapshots;
+        return this.loadMultipleFiles(files);
     }
 
     connectToServer(url) {
@@ -283,7 +312,18 @@ class DataLoader {
         /**
          * Parse snapshot data from server.
          */
-        const positions = new Float32Array(data.positions.flat());
+        // Manual flatten for positions (avoids stack overflow on large arrays)
+        const flattenPositions = (arr) => {
+            const result = new Float32Array(arr.length * 3);
+            for (let i = 0; i < arr.length; i++) {
+                result[i * 3] = arr[i][0];
+                result[i * 3 + 1] = arr[i][1];
+                result[i * 3 + 2] = arr[i][2];
+            }
+            return result;
+        };
+        
+        const positions = flattenPositions(data.positions);
 
         return {
             time: data.time,
@@ -353,6 +393,7 @@ class DataLoader {
     computeStatistics(snapshot) {
         /**
          * Compute basic statistics for a snapshot.
+         * Uses iterative loops instead of spread/reduce to avoid stack overflow on large arrays.
          */
         const stats = {
             n_particles: snapshot.n_particles,
@@ -363,22 +404,123 @@ class DataLoader {
         // Total mass (assuming uniform particle masses)
         stats.total_mass = snapshot.n_particles * 0.00001;  // Placeholder
 
-        // Density statistics
-        stats.rho_min = Math.min(...snapshot.density);
-        stats.rho_max = Math.max(...snapshot.density);
-        stats.rho_mean = snapshot.density.reduce((a,b) => a+b, 0) / snapshot.density.length;
+        // Density statistics (iterative to avoid stack overflow)
+        let rhoMin = Infinity, rhoMax = -Infinity, rhoSum = 0;
+        const density = snapshot.density;
+        for (let i = 0; i < density.length; i++) {
+            const val = density[i];
+            if (val < rhoMin) rhoMin = val;
+            if (val > rhoMax) rhoMax = val;
+            rhoSum += val;
+        }
+        stats.rho_min = rhoMin;
+        stats.rho_max = rhoMax;
+        stats.rho_mean = rhoSum / density.length;
 
-        // Temperature statistics
-        stats.temp_min = Math.min(...snapshot.temperature);
-        stats.temp_max = Math.max(...snapshot.temperature);
-        stats.temp_mean = snapshot.temperature.reduce((a,b) => a+b, 0) / snapshot.temperature.length;
+        // Temperature statistics (iterative to avoid stack overflow)
+        let tempMin = Infinity, tempMax = -Infinity, tempSum = 0;
+        const temperature = snapshot.temperature;
+        for (let i = 0; i < temperature.length; i++) {
+            const val = temperature[i];
+            if (val < tempMin) tempMin = val;
+            if (val > tempMax) tempMax = val;
+            tempSum += val;
+        }
+        stats.temp_min = tempMin;
+        stats.temp_max = tempMax;
+        stats.temp_mean = tempSum / temperature.length;
 
-        // Total energy (approximate)
-        const kinetic = snapshot.velocity_magnitude.reduce((sum, v) => sum + 0.5 * v**2, 0) * 0.00001;
-        const internal = snapshot.internal_energy.reduce((a,b) => a+b, 0) * 0.00001;
-        stats.total_energy = kinetic + internal;
+        // Total energy (approximate) - iterative to avoid stack overflow
+        let kineticSum = 0, internalSum = 0;
+        const velocityMag = snapshot.velocity_magnitude;
+        const internalEnergy = snapshot.internal_energy;
+        for (let i = 0; i < velocityMag.length; i++) {
+            kineticSum += 0.5 * velocityMag[i] * velocityMag[i];
+        }
+        for (let i = 0; i < internalEnergy.length; i++) {
+            internalSum += internalEnergy[i];
+        }
+        stats.total_energy = (kineticSum + internalSum) * 0.00001;
 
         return stats;
+    }
+    
+    /**
+     * Compute the 10th percentile of density across selected snapshots.
+     * Uses up to 100 snapshots evenly spaced throughout the dataset.
+     */
+    computeDensityPercentile() {
+        if (this.snapshots.length === 0) {
+            this.density90thPercentile = 1e-10;
+            return;
+        }
+        
+        // Select up to 100 snapshots evenly spaced
+        const numSamples = Math.min(100, this.snapshots.length);
+        const step = this.snapshots.length / numSamples;
+        
+        let allDensities = [];
+        
+        for (let i = 0; i < numSamples; i++) {
+            const snapIdx = Math.floor(i * step);
+            const snapshot = this.snapshots[snapIdx];
+            
+            // Sample up to 1000 particles per snapshot for efficiency
+            const sampleSize = Math.min(1000, snapshot.density.length);
+            const particleStep = snapshot.density.length / sampleSize;
+            
+            for (let j = 0; j < sampleSize; j++) {
+                const pIdx = Math.floor(j * particleStep);
+                allDensities.push(snapshot.density[pIdx]);
+            }
+        }
+        
+        // Sort and find 90th percentile (for clamping high-density particles)
+        allDensities.sort((a, b) => a - b);
+        const idx90 = Math.floor(allDensities.length * 0.9);
+        this.density90thPercentile = allDensities[idx90];
+        
+        console.log(`Density 90th percentile: ${this.density90thPercentile.toExponential(2)}`);
+    }
+    
+    /**
+     * Get the computed 90th percentile density value (for clamping).
+     */
+    getDensity90thPercentile() {
+        return this.density90thPercentile;
+    }
+    
+    /**
+     * Get black hole parameters from loaded data.
+     */
+    getBHParams() {
+        return {
+            mass: this.bhMass,
+            spin: this.bhSpin,
+            metricType: this.metricType
+        };
+    }
+    
+    /**
+     * Compute event horizon radius from BH mass.
+     * r_s = 2 * G * M / c^2
+     * In code units where G=c=1, r_s = 2*M
+     * For Kerr: r+ = M + sqrt(M^2 - a^2)
+     */
+    getEventHorizonRadius() {
+        if (!this.bhMass) return 1.0;
+        
+        const M = this.bhMass;
+        const a = this.bhSpin || 0;
+        
+        if (this.metricType === 'kerr' && Math.abs(a) > 0) {
+            // Kerr metric: r+ = M + sqrt(M^2 - a^2)
+            const aMax = Math.min(Math.abs(a), M); // Ensure a <= M
+            return M + Math.sqrt(M * M - aMax * aMax);
+        } else {
+            // Schwarzschild: r_s = 2M
+            return 2 * M;
+        }
     }
 
     exportToJSON(filename = 'tde_sph_snapshots.json') {
@@ -408,5 +550,380 @@ class DataLoader {
         link.click();
 
         URL.revokeObjectURL(url);
+    }
+
+    async loadMultipleFiles(files, progressCallback = null) {
+        /**
+         * Load multiple files (JSON or HDF5). HDF5 files are converted client-side.
+         */
+        this.snapshots = [];
+        let processed = 0;
+        const errors = [];
+
+        for (const file of files) {
+            try {
+                const ext = file.name.toLowerCase();
+                let snapshot;
+                if (ext.endsWith('.json')) {
+                    snapshot = await this.loadJSONFile(file);
+                } else if (ext.endsWith('.h5') || ext.endsWith('.hdf5')) {
+                    snapshot = await this.loadHDF5File(file);
+                } else {
+                    console.warn(`Skipping unsupported file: ${file.name}`);
+                    continue;
+                }
+
+                this.snapshots.push(snapshot);
+            } catch(error) {
+                console.error(`Error loading ${file.name}:`, error);
+                errors.push(`${file.name}: ${error.message}`);
+            }
+
+            processed += 1;
+            if (progressCallback) {
+                const pct = Math.round((processed / files.length) * 100);
+                progressCallback(pct);
+            }
+        }
+
+        // Sort by time
+        this.snapshots.sort((a, b) => a.time - b.time);
+
+        this.currentIndex = 0;
+        this.isLoaded = this.snapshots.length > 0;
+        
+        // Compute density statistics after loading
+        if (this.isLoaded) {
+            this.computeDensityPercentile();
+        }
+
+        if (!this.isLoaded && errors.length) {
+            throw new Error(`Failed to load snapshots: ${errors.join('; ')}`);
+        }
+
+        console.log(`Loaded ${this.snapshots.length} snapshots`);
+
+        return this.snapshots;
+    }
+
+    async loadHDF5File(file) {
+        /**
+         * Load a single HDF5 snapshot using h5wasm and convert to web schema.
+         */
+        await this.ensureH5Wasm();
+        if (!this.h5wasm) {
+            throw new Error('HDF5 support unavailable (h5wasm not initialized)');
+        }
+        
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Write to virtual filesystem and open
+        const filename = file.name;
+        this.h5wasm.FS.writeFile(filename, new Uint8Array(arrayBuffer));
+        const f = new this.h5wasm.File(filename, 'r');
+
+        const getDataset = (path) => {
+            try {
+                // Try various path formats
+                const paths = [
+                    path,
+                    path.startsWith('/') ? path.slice(1) : '/' + path,
+                    path.replace('/particles/', 'particles/')
+                ];
+                
+                for (const p of paths) {
+                    try {
+                        const dset = f.get(p);
+                        if (dset && dset.dtype) {
+                            const data = dset.value;
+                            // Convert to Float32Array without spread/apply (avoids stack overflow on large arrays)
+                            if (data instanceof Float32Array) {
+                                return data;
+                            } else if (data instanceof Float64Array) {
+                                // Manual copy from Float64Array to Float32Array
+                                const result = new Float32Array(data.length);
+                                for (let i = 0; i < data.length; i++) {
+                                    result[i] = data[i];
+                                }
+                                return result;
+                            } else if (ArrayBuffer.isView(data)) {
+                                // Other typed arrays - manual copy
+                                const result = new Float32Array(data.length);
+                                for (let i = 0; i < data.length; i++) {
+                                    result[i] = data[i];
+                                }
+                                return result;
+                            } else if (Array.isArray(data)) {
+                                // Manual flatten for nested arrays
+                                if (data.length > 0 && Array.isArray(data[0])) {
+                                    const innerLen = data[0].length;
+                                    const result = new Float32Array(data.length * innerLen);
+                                    for (let i = 0; i < data.length; i++) {
+                                        for (let j = 0; j < innerLen; j++) {
+                                            result[i * innerLen + j] = data[i][j];
+                                        }
+                                    }
+                                    return result;
+                                } else {
+                                    // Manual copy from regular array
+                                    const result = new Float32Array(data.length);
+                                    for (let i = 0; i < data.length; i++) {
+                                        result[i] = data[i];
+                                    }
+                                    return result;
+                                }
+                            } else if (typeof data === 'number') {
+                                return new Float32Array([data]);
+                            } else {
+                                // Unknown type - try manual iteration
+                                const len = data.length || 0;
+                                const result = new Float32Array(len);
+                                for (let i = 0; i < len; i++) {
+                                    result[i] = data[i];
+                                }
+                                return result;
+                            }
+                        }
+                    } catch(e) {
+                        // Try next path
+                    }
+                }
+                return null;
+            } catch (e) {
+                return null;
+            }
+        };
+        
+        const getAttr = (obj, attrName) => {
+            try {
+                if (obj && obj.attrs) {
+                    const attr = obj.attrs.get(attrName);
+                    if (attr !== undefined && attr !== null) {
+                        // Handle different attribute types
+                        if (typeof attr === 'object' && attr.value !== undefined) {
+                            return attr.value;
+                        }
+                        return attr;
+                    }
+                }
+            } catch(e) {
+                // Attribute not found
+            }
+            return null;
+        };
+
+        // Load particle data
+        const positions = getDataset('/particles/positions') || getDataset('particles/positions');
+        if (!positions) {
+            f.close();
+            this.h5wasm.FS.unlink(filename);
+            throw new Error("positions dataset missing in HDF5 file");
+        }
+
+        const density = getDataset('/particles/density') || getDataset('particles/density');
+        if (!density) {
+            f.close();
+            this.h5wasm.FS.unlink(filename);
+            throw new Error("density dataset missing in HDF5 file");
+        }
+
+        const internalEnergy = getDataset('/particles/internal_energy') || getDataset('particles/internal_energy');
+        if (!internalEnergy) {
+            f.close();
+            this.h5wasm.FS.unlink(filename);
+            throw new Error("internal_energy dataset missing in HDF5 file");
+        }
+
+        const velocities = getDataset('/particles/velocities') || getDataset('particles/velocities');
+        let velocityMag = getDataset('/particles/velocity_magnitude') || getDataset('particles/velocity_magnitude');
+        if (!velocityMag && velocities) {
+            velocityMag = new Float32Array(velocities.length / 3);
+            for (let i = 0; i < velocityMag.length; i++) {
+                const vx = velocities[i*3];
+                const vy = velocities[i*3+1];
+                const vz = velocities[i*3+2];
+                velocityMag[i] = Math.sqrt(vx*vx + vy*vy + vz*vz);
+            }
+        }
+
+        let pressure = getDataset('/particles/pressure') || getDataset('particles/pressure');
+        const gamma = 5.0 / 3.0;
+        if (!pressure && density && internalEnergy) {
+            pressure = new Float32Array(density.length);
+            for (let i = 0; i < density.length; i++) {
+                pressure[i] = (gamma - 1.0) * density[i] * internalEnergy[i];
+            }
+        }
+
+        let temperature = getDataset('/particles/temperature') || getDataset('particles/temperature');
+        if (!temperature) {
+            // Manual copy instead of .slice() to avoid stack overflow on large arrays
+            temperature = new Float32Array(internalEnergy.length);
+            for (let i = 0; i < internalEnergy.length; i++) {
+                temperature[i] = internalEnergy[i];
+            }
+        }
+
+        let entropy = getDataset('/particles/entropy') || getDataset('particles/entropy');
+        if (!entropy && pressure && density) {
+            entropy = new Float32Array(density.length);
+            for (let i = 0; i < density.length; i++) {
+                const rho = Math.max(density[i], 1e-30);
+                entropy[i] = pressure[i] / Math.pow(rho, gamma);
+            }
+        }
+
+        // Get metadata
+        const root = f.get('/');
+        let timeVal = 0.0;
+        let stepVal = 0;
+        
+        // Try root attributes first
+        timeVal = getAttr(root, 'time');
+        stepVal = getAttr(root, 'step') || getAttr(root, 'iteration') || getAttr(root, 'timestep');
+        
+        // Try metadata group
+        let metaGroup = null;
+        try {
+            metaGroup = f.get('/metadata') || f.get('metadata');
+        } catch(e) {
+            // No metadata group
+        }
+        
+        if (metaGroup) {
+            if (timeVal === null || timeVal === undefined) {
+                timeVal = getAttr(metaGroup, 'simulation_time') || getAttr(metaGroup, 'time');
+            }
+            if (stepVal === null || stepVal === undefined) {
+                stepVal = getAttr(metaGroup, 'step');
+            }
+            
+            // Get BH parameters
+            const bhMass = getAttr(metaGroup, 'bh_mass');
+            const bhSpin = getAttr(metaGroup, 'bh_spin');
+            const metricType = getAttr(metaGroup, 'metric_type');
+            
+            if (bhMass !== null && this.bhMass === null) {
+                this.bhMass = parseFloat(bhMass);
+                console.log(`Loaded BH mass from HDF5: ${this.bhMass}`);
+            }
+            if (bhSpin !== null && this.bhSpin === null) {
+                this.bhSpin = parseFloat(bhSpin);
+            }
+            if (metricType !== null && this.metricType === null) {
+                this.metricType = metricType;
+            }
+        }
+        
+        // Parse time value
+        if (timeVal !== null && timeVal !== undefined) {
+            timeVal = parseFloat(timeVal);
+        } else {
+            // Try to extract from filename
+            const match = file.name.match(/snapshot_(\d+)/);
+            if (match) {
+                timeVal = parseFloat(match[1]) * 0.1;  // Estimate
+            } else {
+                timeVal = 0.0;
+            }
+        }
+
+        const snapshot = {
+            time: timeVal,
+            step: stepVal ? parseInt(stepVal) : 0,
+            n_particles: positions.length / 3,
+            positions: positions,
+            density: density,
+            temperature: temperature,
+            internal_energy: internalEnergy,
+            velocity_magnitude: velocityMag || new Float32Array(density.length),
+            pressure: pressure || new Float32Array(density.length),
+            entropy: entropy || new Float32Array(density.length)
+        };
+
+        f.close();
+        
+        // Clean up virtual filesystem
+        try {
+            this.h5wasm.FS.unlink(filename);
+        } catch(e) {
+            // Ignore cleanup errors
+        }
+        
+        return snapshot;
+    }
+
+    async ensureH5Wasm() {
+        if (this.h5wasm) {
+            return;
+        }
+        
+        if (this.h5wasmReady) {
+            await this.h5wasmReady;
+            return;
+        }
+
+        // Lazy-load h5wasm from CDN using ESM
+        this.h5wasmReady = new Promise(async (resolve, reject) => {
+            try {
+                // Use dynamic import for ESM module
+                const h5wasmModule = await import('https://cdn.jsdelivr.net/npm/h5wasm@0.7.4/dist/esm/hdf5_hl.js');
+                
+                // Wait for WASM to be ready
+                await h5wasmModule.ready;
+                
+                this.h5wasm = h5wasmModule;
+                console.log('h5wasm loaded successfully');
+                resolve();
+            } catch (error) {
+                console.error('Failed to load h5wasm:', error);
+                
+                // Fallback: Try script tag approach for non-ESM environments
+                try {
+                    await this.loadH5WasmScript();
+                    resolve();
+                } catch (e2) {
+                    reject(new Error(`h5wasm init failed: ${error.message}`));
+                }
+            }
+        });
+
+        await this.h5wasmReady;
+    }
+    
+    loadH5WasmScript() {
+        return new Promise((resolve, reject) => {
+            // Check if already loaded globally
+            if (window.h5wasm) {
+                this.h5wasm = window.h5wasm;
+                resolve();
+                return;
+            }
+            
+            const script = document.createElement('script');
+            script.type = 'module';
+            script.textContent = `
+                import * as h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.7.4/dist/esm/hdf5_hl.js';
+                await h5wasm.ready;
+                window.h5wasm = h5wasm;
+                window.dispatchEvent(new Event('h5wasm-loaded'));
+            `;
+            
+            window.addEventListener('h5wasm-loaded', () => {
+                this.h5wasm = window.h5wasm;
+                console.log('h5wasm loaded via script');
+                resolve();
+            }, { once: true });
+            
+            script.onerror = () => reject(new Error('Failed to load h5wasm script'));
+            document.head.appendChild(script);
+            
+            // Timeout fallback
+            setTimeout(() => {
+                if (!this.h5wasm) {
+                    reject(new Error('h5wasm loading timeout'));
+                }
+            }, 10000);
+        });
     }
 }

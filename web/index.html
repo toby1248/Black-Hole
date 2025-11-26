@@ -8,18 +8,52 @@
     <!-- Stylesheet -->
     <link rel="stylesheet" href="css/style.css">
 
-    <!-- Three.js from CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-
-    <!-- OrbitControls for camera manipulation -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- Three.js ESM imports via importmap -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    
+    <!-- Load Three.js and post-processing modules -->
+    <script type="module">
+        import * as THREE_MODULE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { Lut } from 'three/addons/math/Lut.js';
+        
+        // Create a mutable object that contains all THREE exports plus addons
+        const THREE = Object.assign({}, THREE_MODULE, {
+            OrbitControls,
+            EffectComposer,
+            RenderPass,
+            UnrealBloomPass,
+            ShaderPass,
+            Lut
+        });
+        
+        // Expose to global scope for non-module scripts
+        window.THREE = THREE;
+        
+        // Dispatch event when Three.js is ready
+        window.dispatchEvent(new Event('threejs-ready'));
+    </script>
 </head>
 <body>
     <div id="app">
-        <!-- Header -->
-        <header>
-            <h1>🌌 TDE-SPH Web Visualizer</h1>
-            <p>Interactive 3D visualization of tidal disruption events</p>
+        <!-- Header (collapsible) -->
+        <header id="header-banner">
+            <div class="header-content">
+                <h1>🌌 TDE-SPH Web Visualizer</h1>
+                <p>Interactive 3D visualization of tidal disruption events</p>
+            </div>
+            <button id="header-close-btn" class="header-close" title="Hide header">×</button>
         </header>
 
         <!-- Main content -->
@@ -38,9 +72,38 @@
                     </div>
 
                     <div class="control-group" id="file-upload-group">
-                        <label for="file-upload">Upload HDF5:</label>
-                        <input type="file" id="file-upload" accept=".h5,.hdf5" multiple>
+                        <label for="file-upload">Upload HDF5/JSON:</label>
+                        <input type="file" id="file-upload" accept=".h5,.hdf5,.json" multiple>
                         <button id="load-files-btn" class="btn btn-primary">Load Files</button>
+                        <div id="load-progress-wrap">
+                            <label for="load-progress">Progress:</label>
+                            <progress id="load-progress" value="0" max="100"></progress>
+                            <span id="load-progress-text">0%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group" id="streaming-options">
+                        <label>
+                            <input type="checkbox" id="streaming-mode-checkbox">
+                            Streaming Mode (large datasets)
+                        </label>
+                        <small>Loads snapshots on-demand to save RAM</small>
+                    </div>
+                    
+                    <div class="control-group" id="memory-settings" style="display:none;">
+                        <label for="ram-cache-slider">RAM Cache: <span id="ram-cache-value">16</span> GB</label>
+                        <input type="range" id="ram-cache-slider" min="1" max="32" value="16" step="1">
+                        <small>Max RAM for cached snapshots</small>
+                    </div>
+                    
+                    <div class="control-group" id="spline-options" style="display:none;">
+                        <button id="precompute-splines-btn" class="btn btn-primary">🔄 Precompute Splines</button>
+                        <small>Cache smooth interpolation to disk (may be large)</small>
+                        <div id="spline-progress" style="display:none;">
+                            <progress id="spline-progress-bar" value="0" max="100"></progress>
+                            <span id="spline-progress-text">0%</span>
+                        </div>
+                        <div id="spline-status" style="margin-top:5px;"></div>
                     </div>
 
                     <div class="control-group" id="server-connect-group" style="display:none;">
@@ -51,6 +114,10 @@
 
                     <div class="control-group">
                         <button id="load-demo-btn" class="btn btn-success">Load Demo Data</button>
+                    </div>
+                    
+                    <div class="control-group" id="cache-stats" style="display:none;">
+                        <small>Cache: <span id="cache-stats-text">-</span></small>
                     </div>
                 </div>
 
@@ -69,8 +136,21 @@
                     </div>
 
                     <div class="control-group">
-                        <label for="fps-slider">FPS: <span id="fps-value">30</span></label>
-                        <input type="range" id="fps-slider" min="1" max="60" value="30" step="1">
+                        <label>
+                            <input type="checkbox" id="interpolation-checkbox">
+                            Smooth Interpolation
+                        </label>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="playback-speed">Playback Speed: <span id="playback-speed-value">1.0x</span></label>
+                        <input type="range" id="playback-speed" min="-4" max="1" value="0" step="0.1">
+                        <small>Range: 0.0001x to 10x (logarithmic)</small>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="fps-slider">Max FPS: <span id="fps-value">60</span></label>
+                        <input type="range" id="fps-slider" min="1" max="60" value="60" step="1">
                     </div>
 
                     <div class="control-group">
@@ -80,6 +160,15 @@
 
                 <div class="panel">
                     <h2>Visualization</h2>
+                    
+                    <div class="control-group">
+                        <label for="renderer-mode">Renderer:</label>
+                        <select id="renderer-mode">
+                            <option value="instanced">3D Instanced (1M+ particles)</option>
+                            <option value="points">2D Points (legacy)</option>
+                        </select>
+                    </div>
+                    
                     <div class="control-group">
                         <label for="color-by">Color By:</label>
                         <select id="color-by">
@@ -95,6 +184,7 @@
                     <div class="control-group">
                         <label for="colormap">Colormap:</label>
                         <select id="colormap">
+                            <option value="blackbody">Blackbody (thermal)</option>
                             <option value="viridis">Viridis</option>
                             <option value="plasma">Plasma</option>
                             <option value="inferno">Inferno</option>
@@ -105,28 +195,91 @@
                     </div>
 
                     <div class="control-group">
-                        <label for="point-size">Point Size: <span id="point-size-value">2.0</span></label>
-                        <input type="range" id="point-size" min="0.5" max="10" value="2.0" step="0.5">
+                        <label for="point-size">Particle Size: <span id="point-size-value">0.1</span></label>
+                        <input type="range" id="point-size" min="0.001" max="0.1" value="0.01" step="0.001">
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="max-size-mult">Max Size Multiplier: <span id="max-size-mult-value">2.0x</span></label>
+                        <input type="range" id="max-size-mult" min="1" max="10" value="2" step="0.5">
+                        <small>Max scaling for low-density particles</small>
+                    </div>
+
+                    <div class="control-group" id="point-shape-group">
+                        <label for="point-shape">Point Shape (2D only):</label>
+                        <select id="point-shape">
+                            <option value="square">Square</option>
+                            <option value="circle">Circle</option>
+                            <option value="smooth">Smooth Circle</option>
+                        </select>
+                    </div>
+
+                    <div class="control-group">
+                        <label for="point-opacity">Base Opacity: <span id="point-opacity-value">1.00</span></label>
+                        <input type="range" id="point-opacity" min="0.1" max="1" value="1" step="0.05">
+                    </div>
+                    
+                    <div class="control-group">
+                        <label for="opacity-scale">Opacity Scale: <span id="opacity-scale-value">1.0</span></label>
+                        <input type="range" id="opacity-scale" min="-3" max="1" value="0" step="0.1">
+                        <small>Log scale: 0.001 to 10</small>
+                    </div>
+
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="size-by-density" checked>
+                            Size by density (10th percentile baseline)
+                        </label>
                     </div>
 
                     <div class="control-group">
                         <label>
                             <input type="checkbox" id="log-scale-checkbox" checked>
-                            Logarithmic Scale
+                            Logarithmic Color Scale
                         </label>
                     </div>
-
+                </div>
+                
+                <div class="panel" id="bloom-panel">
+                    <h2>Bloom Effects</h2>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="bloom-checkbox" checked>
+                            Enable Bloom
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="bloom-strength">Strength: <span id="bloom-strength-value">1.0</span></label>
+                        <input type="range" id="bloom-strength" min="0" max="3" value="1.0" step="0.1">
+                    </div>
+                    <div class="control-group">
+                        <label for="bloom-radius">Radius: <span id="bloom-radius-value">0.4</span></label>
+                        <input type="range" id="bloom-radius" min="0.001" max="1" value="0.4" step="0.001">
+                    </div>
+                    <div class="control-group">
+                        <label for="bloom-threshold">Threshold: <span id="bloom-threshold-value">0.0</span></label>
+                        <input type="range" id="bloom-threshold" min="0" max="1" value="0" step="0.05">
+                    </div>
+                </div>
+                
+                <div class="panel">
+                    <h2>Scene</h2>
                     <div class="control-group">
                         <label>
                             <input type="checkbox" id="show-bh-checkbox" checked>
                             Show Black Hole
                         </label>
                     </div>
-
                     <div class="control-group">
                         <label>
                             <input type="checkbox" id="show-axes-checkbox" checked>
                             Show Axes
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="show-skybox-checkbox" checked>
+                            Show Skybox
                         </label>
                     </div>
                 </div>
@@ -136,6 +289,8 @@
                     <div class="stats-display">
                         <table id="stats-table">
                             <tr><td>Particles:</td><td id="stat-particles">0</td></tr>
+                            <tr><td>BH Mass:</td><td id="stat-bh-mass">-</td></tr>
+                            <tr><td>Event Horizon:</td><td id="stat-event-horizon">-</td></tr>
                             <tr><td>Total Mass:</td><td id="stat-mass">0.0</td></tr>
                             <tr><td>Total Energy:</td><td id="stat-energy">0.0</td></tr>
                             <tr><td>Min Density:</td><td id="stat-rho-min">0.0</td></tr>
@@ -153,6 +308,11 @@
                         <button id="top-view-btn" class="btn">Top View</button>
                         <button id="side-view-btn" class="btn">Side View</button>
                     </div>
+                    <div class="control-group">
+                        <label for="move-speed">Move Speed: <span id="move-speed-value">0.5</span></label>
+                        <input type="range" id="move-speed" min="0.1" max="5" value="0.5" step="0.1">
+                    </div>
+                    <small>W/S: Fwd/Back | A/D: Left/Right<br>Q/E: Rotate | Shift/Ctrl: Up/Down</small>
                 </div>
 
                 <div class="panel">
@@ -160,6 +320,9 @@
                     <div class="control-group">
                         <button id="screenshot-btn" class="btn">📷 Screenshot</button>
                         <button id="export-json-btn" class="btn" disabled>💾 Export JSON</button>
+                    </div>
+                    <div class="control-group">
+                        <button id="clear-cache-btn" class="btn btn-warning">🗑️ Clear Disk Cache</button>
                     </div>
                 </div>
             </aside>
@@ -173,6 +336,9 @@
                     <p id="loading-message">Load data to begin visualization</p>
                     <div id="fps-counter">FPS: <span id="fps-counter-value">0</span></div>
                 </div>
+                
+                <!-- Show header button (when hidden) -->
+                <button id="show-header-btn" class="show-header-btn" style="display:none;">☰ Show Header</button>
             </main>
         </div>
 
@@ -184,7 +350,10 @@
 
     <!-- Application scripts -->
     <script src="js/data_loader.js"></script>
+    <script src="js/streaming_loader.js"></script>
+    <script src="js/interpolation.js"></script>
     <script src="js/visualizer.js"></script>
+    <script src="js/visualizer3d.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
