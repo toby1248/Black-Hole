@@ -356,7 +356,7 @@ class TimeIntegrator(ABC):
     def estimate_timestep(
         self,
         particles: Any,
-        cfl_factor: float = 0.3,
+        cfl_factor: float = 1.0,
         **kwargs
     ) -> float:
         """
